@@ -5,43 +5,18 @@ import { getUserGenerations } from '@/lib/db';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import type { Generation } from '@/types';
 
-// 处理媒体 URL：
-// - 需要认证的 URL（如 /content）：转换为代理 URL
-// - 外部公开 URL：保持原样
-// - base64/file：转换为代理 URL
+// Keep completed media on a stable same-origin URL so browser private cache can be reused.
 function convertToMediaUrl(generation: Generation): Generation {
-  const { resultUrl, type } = generation;
+  const { resultUrl } = generation;
   
-  // 如果没有结果URL，直接返回
   if (!resultUrl) {
     return generation;
   }
 
-  if (type.includes('video')) {
-    return {
-      ...generation,
-      resultUrl: `/api/media/${generation.id}`,
-    };
-  }
-  
-  // 需要 API Key 认证的 Sora /content URL，转换为代理 URL
-  if (resultUrl.includes('/v1/videos/') && resultUrl.includes('/content')) {
-    return {
-      ...generation,
-      resultUrl: `/api/media/${generation.id}`,
-    };
-  }
-  
-  // base64 data URL 或本地文件，转换为代理 URL
-  if (resultUrl.startsWith('data:') || resultUrl.startsWith('file:')) {
-    return {
-      ...generation,
-      resultUrl: `/api/media/${generation.id}`,
-    };
-  }
-  
-  // 外部公开 URL，保持原样
-  return generation;
+  return {
+    ...generation,
+    resultUrl: `/api/media/${generation.id}`,
+  };
 }
 
 export async function GET(request: NextRequest) {

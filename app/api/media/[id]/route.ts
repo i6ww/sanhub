@@ -7,6 +7,8 @@ import { readMediaFile, isLocalFile } from '@/lib/media-storage';
 import { getVideoContentUrl } from '@/lib/sora-api';
 import { fetchExternalBuffer, resolveAndValidateUrl } from '@/lib/safe-fetch';
 
+const MEDIA_CACHE_CONTROL = 'private, max-age=31536000, immutable';
+
 // 媒体文件服务端点
 // 支持多种存储方式：
 // 1. 本地文件 (file:xxx.png)
@@ -81,7 +83,7 @@ export async function GET(
       if (!file) {
         return new NextResponse('File not found', { status: 404 });
       }
-      return createMediaResponse(file.buffer, file.mimeType);
+      return createMediaResponse(request, file.buffer, file.mimeType, id);
     }
     
     // 2. 外部 URL，代理请求或重定向
@@ -105,7 +107,7 @@ export async function GET(
         }
       }
       // 对于图片，代理请求
-      return await proxyExternalUrl(safeUrl.toString(), generation.type, origin);
+      return await proxyExternalUrl(safeUrl.toString(), generation.type, origin, request, id);
     }
     
     // 3. Base64 data URL
@@ -119,7 +121,7 @@ export async function GET(
     const base64Data = match[2];
     const buffer = Buffer.from(base64Data, 'base64');
     
-    return createMediaResponse(buffer, mimeType);
+    return createMediaResponse(request, buffer, mimeType, id);
   } catch (error) {
     console.error('[Media API] Error:', error);
     return new NextResponse('Internal Server Error', { status: 500 });
@@ -127,7 +129,13 @@ export async function GET(
 }
 
 // 代理外部URL
-async function proxyExternalUrl(url: string, type: string, origin: string): Promise<NextResponse> {
+async function proxyExternalUrl(
+  url: string,
+  type: string,
+  origin: string,
+  request: NextRequest,
+  cacheKey: string
+): Promise<NextResponse> {
   try {
     const { buffer, contentType } = await fetchExternalBuffer(url, {
       origin,
@@ -144,28 +152,56 @@ async function proxyExternalUrl(url: string, type: string, origin: string): Prom
     }
 
     const finalType = contentType || (type.includes('video') ? 'video/mp4' : 'image/png');
-    return createMediaResponse(buffer, finalType);
+    return createMediaResponse(request, buffer, finalType, cacheKey);
   } catch (error) {
     console.error('[Media API] Proxy error:', error);
     return new NextResponse('Proxy error', { status: 502 });
   }
 }
 
+function buildMediaETag(cacheKey: string, contentLength: number, contentType: string): string {
+  return `"${encodeURIComponent(cacheKey)}-${contentLength}-${encodeURIComponent(contentType)}"`;
+}
+
+function requestMatchesETag(request: NextRequest, etag: string): boolean {
+  const value = request.headers.get('if-none-match');
+  if (!value) return false;
+
+  return value
+    .split(',')
+    .some((candidate) => candidate.trim() === etag || candidate.trim() === '*');
+}
+
 // 创建媒体响应
-function createMediaResponse(buffer: Buffer, contentType: string): NextResponse {
-  const cacheControl = 'private, max-age=0, no-store';
-  
+function createMediaResponse(
+  request: NextRequest,
+  buffer: Buffer,
+  contentType: string,
+  cacheKey: string
+): NextResponse {
+  const etag = buildMediaETag(cacheKey, buffer.length, contentType);
+
   const headers: HeadersInit = {
     'Content-Type': contentType,
-    'Content-Length': buffer.length.toString(),
-    'Cache-Control': cacheControl,
+    'Cache-Control': MEDIA_CACHE_CONTROL,
+    ETag: etag,
     'X-Content-Type-Options': 'nosniff',
     'Vary': 'Cookie',
   };
+
+  if (requestMatchesETag(request, etag)) {
+    return new NextResponse(null, {
+      status: 304,
+      headers,
+    });
+  }
   
   // 转换为 Uint8Array 以兼容 NextResponse
   return new NextResponse(new Uint8Array(buffer), {
     status: 200,
-    headers,
+    headers: {
+      ...headers,
+      'Content-Length': buffer.length.toString(),
+    },
   });
 }
