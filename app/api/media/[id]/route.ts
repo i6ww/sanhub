@@ -5,9 +5,10 @@ import { authOptions } from '@/lib/auth';
 import { getGeneration } from '@/lib/db';
 import { readMediaFile, isLocalFile } from '@/lib/media-storage';
 import { getVideoContentUrl } from '@/lib/sora-api';
-import { fetchExternalBuffer, resolveAndValidateUrl } from '@/lib/safe-fetch';
+import { resolveAndValidateUrl } from '@/lib/safe-fetch';
 
 const MEDIA_CACHE_CONTROL = 'private, max-age=31536000, immutable';
+const MEDIA_REDIRECT_CACHE_CONTROL = 'private, max-age=3600';
 
 // 媒体文件服务端点
 // 支持多种存储方式：
@@ -101,13 +102,12 @@ export async function GET(
         try {
           const { applyVideoProxy } = await import('@/lib/sora-api');
           const proxied = await applyVideoProxy(safeUrl.toString());
-          return NextResponse.redirect(proxied, 302);
+          return createRedirectResponse(proxied);
         } catch {
-          return NextResponse.redirect(safeUrl.toString(), 302);
+          return createRedirectResponse(safeUrl.toString());
         }
       }
-      // 对于图片，代理请求
-      return await proxyExternalUrl(safeUrl.toString(), generation.type, origin, request, id);
+      return createRedirectResponse(safeUrl.toString());
     }
     
     // 3. Base64 data URL
@@ -128,35 +128,11 @@ export async function GET(
   }
 }
 
-// 代理外部URL
-async function proxyExternalUrl(
-  url: string,
-  type: string,
-  origin: string,
-  request: NextRequest,
-  cacheKey: string
-): Promise<NextResponse> {
-  try {
-    const { buffer, contentType } = await fetchExternalBuffer(url, {
-      origin,
-      allowRelative: false,
-      maxBytes: 20 * 1024 * 1024,
-      timeoutMs: 15000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    });
-
-    if (!contentType.startsWith('image/')) {
-      return new NextResponse('Unsupported media type', { status: 415 });
-    }
-
-    const finalType = contentType || (type.includes('video') ? 'video/mp4' : 'image/png');
-    return createMediaResponse(request, buffer, finalType, cacheKey);
-  } catch (error) {
-    console.error('[Media API] Proxy error:', error);
-    return new NextResponse('Proxy error', { status: 502 });
-  }
+function createRedirectResponse(url: string): NextResponse {
+  const response = NextResponse.redirect(url, 302);
+  response.headers.set('Cache-Control', MEDIA_REDIRECT_CACHE_CONTROL);
+  response.headers.set('Vary', 'Cookie');
+  return response;
 }
 
 function buildMediaETag(cacheKey: string, contentLength: number, contentType: string): string {

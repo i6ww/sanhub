@@ -5,11 +5,22 @@ import { getGeneration } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
-// Keep completed media on a stable same-origin URL so browser private cache can be reused.
-function convertToMediaUrl(resultUrl: string | undefined, id: string): string {
+function convertToMediaUrl(resultUrl: string | undefined, id: string, type: string): string {
   if (!resultUrl) return '';
 
-  return `/api/media/${id}`;
+  if (type.includes('video')) {
+    return `/api/media/${id}`;
+  }
+
+  if (resultUrl.includes('/v1/videos/') && resultUrl.includes('/content')) {
+    return `/api/media/${id}`;
+  }
+
+  if (resultUrl.startsWith('data:') || resultUrl.startsWith('file:')) {
+    return `/api/media/${id}`;
+  }
+
+  return resultUrl;
 }
 
 export async function GET(
@@ -55,7 +66,7 @@ export async function GET(
         id: generation.id,
         status: generation.status,
         type: generation.type,
-        url: convertToMediaUrl(generation.resultUrl, generation.id),
+        url: convertToMediaUrl(generation.resultUrl, generation.id, generation.type),
         cost: generation.cost,
         progress: generationParams?.progress ?? 0,
         errorMessage: generation.errorMessage,

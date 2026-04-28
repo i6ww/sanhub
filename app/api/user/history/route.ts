@@ -5,18 +5,35 @@ import { getUserGenerations } from '@/lib/db';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 import type { Generation } from '@/types';
 
-// Keep completed media on a stable same-origin URL so browser private cache can be reused.
 function convertToMediaUrl(generation: Generation): Generation {
-  const { resultUrl } = generation;
+  const { resultUrl, type } = generation;
   
   if (!resultUrl) {
     return generation;
   }
 
-  return {
-    ...generation,
-    resultUrl: `/api/media/${generation.id}`,
-  };
+  if (type.includes('video')) {
+    return {
+      ...generation,
+      resultUrl: `/api/media/${generation.id}`,
+    };
+  }
+
+  if (resultUrl.includes('/v1/videos/') && resultUrl.includes('/content')) {
+    return {
+      ...generation,
+      resultUrl: `/api/media/${generation.id}`,
+    };
+  }
+
+  if (resultUrl.startsWith('data:') || resultUrl.startsWith('file:')) {
+    return {
+      ...generation,
+      resultUrl: `/api/media/${generation.id}`,
+    };
+  }
+
+  return generation;
 }
 
 export async function GET(request: NextRequest) {
