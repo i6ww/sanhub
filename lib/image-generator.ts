@@ -15,6 +15,7 @@ export interface ImageGenerateRequest {
   aspectRatio?: string;
   imageSize?: string;
   images?: Array<{ mimeType: string; data: string }>;
+  idempotencyKey?: string;
 }
 
 // Key 轮询索引
@@ -70,6 +71,8 @@ const ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
 
 const isSizeValue = (value: string): boolean =>
   PIXEL_SIZE_PATTERN.test(value) || ASPECT_RATIO_PATTERN.test(value);
+
+const GENERATION_POST_RETRY_OPTIONS = { attempts: 1 };
 
 function buildOpenAIImageInput(
   images: ImageGenerateRequest['images']
@@ -141,7 +144,7 @@ async function generateWithOpenAI(
     model: target.model,
     prompt: request.prompt,
     n: 1,
-    response_format: 'b64_json',
+    response_format: 'url',
   };
 
   // 添加尺寸参数
@@ -171,9 +174,15 @@ async function generateWithOpenAI(
     headers: {
       'Authorization': `Bearer ${key}`,
       'Content-Type': 'application/json',
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
     },
     body: JSON.stringify(payload),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -243,12 +252,20 @@ async function generateWithGemini(
 
   const response = await fetchWithRetry(fetch, url, () => ({
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
+    },
     body: JSON.stringify({
       contents: [{ parts }],
       generationConfig,
     }),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -364,9 +381,15 @@ async function generateWithModelScope(
       'Authorization': `Bearer ${key}`,
       'Content-Type': 'application/json',
       ...(useAsync ? { 'X-ModelScope-Async-Mode': 'true' } : {}),
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
     },
     body: JSON.stringify(payload),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -431,9 +454,15 @@ async function generateWithGitee(
     headers: {
       'Authorization': `Bearer ${key}`,
       'Content-Type': 'application/json',
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
     },
     body: JSON.stringify(payload),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -486,9 +515,17 @@ async function generateWithGiteeUpscale(
 
   const response = await fetchWithRetry(fetch, url, () => ({
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${apiKey}` },
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
+    },
     body: buildFormData(),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -538,9 +575,15 @@ async function generateWithGiteeMatting(
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'X-Failover-Enabled': 'true',
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
     },
     body: buildFormData(),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -611,9 +654,15 @@ async function generateWithOpenAIChat(
     headers: {
       'Authorization': `Bearer ${key}`,
       'Content-Type': 'application/json',
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
     },
     body: JSON.stringify(payload),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();
@@ -794,9 +843,15 @@ async function generateWithSora(
     headers: {
       'Authorization': `Bearer ${key}`,
       'Content-Type': 'application/json',
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
     },
     body: JSON.stringify(payload),
-  }));
+  }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
     const errorText = await response.text();

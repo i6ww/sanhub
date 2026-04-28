@@ -18,7 +18,7 @@ import { fetchReferenceImage } from '@/lib/reference-image';
 import { assertPromptsAllowed, isPromptBlockedError } from '@/lib/prompt-blocklist';
 import type { ChannelType, Generation, GenerationType } from '@/types';
 
-export const maxDuration = 60;
+export const maxDuration = 600;
 export const dynamic = 'force-dynamic';
 
 const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -289,7 +289,10 @@ export async function POST(request: NextRequest) {
     processGenerationTask(
       generation.id,
       user.id,
-      generateRequest,
+      {
+        ...generateRequest,
+        idempotencyKey: `sanhub-image-${generation.id}`,
+      },
       model.costPerGeneration,
       generationParams
     ).catch((err) => {

@@ -15,6 +15,15 @@ import {
 import { assertPromptsAllowed } from '@/lib/prompt-blocklist';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 600;
+
+function requestIdempotencyKey(request: NextRequest, fallbackPrefix: string): string {
+  return (
+    request.headers.get('Idempotency-Key') ||
+    request.headers.get('X-Idempotency-Key') ||
+    `${fallbackPrefix}-${crypto.randomUUID()}`
+  );
+}
 
 export async function POST(request: NextRequest) {
   const token = extractBearerToken(request);
@@ -54,6 +63,7 @@ export async function POST(request: NextRequest) {
       prompt: parsed.prompt,
       ...resolveImageSize(parsed.size),
       images: imageInputs.length > 0 ? imageInputs : undefined,
+      idempotencyKey: requestIdempotencyKey(request, 'sanhub-v1-image'),
     };
 
     const result = await generateImage(imageRequest);

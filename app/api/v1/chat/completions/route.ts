@@ -21,6 +21,7 @@ import { processVideoPrompt } from '@/lib/prompt-processor';
 import { assertPromptsAllowed } from '@/lib/prompt-blocklist';
 
 export const dynamic = 'force-dynamic';
+export const maxDuration = 600;
 
 const OPENAI_CHAT_VIDEO_CHANNEL_TYPES = new Set(['sora', 'openai-compatible', 'flow2api']);
 
@@ -49,6 +50,14 @@ function shouldUseOpenAiStream(body: Record<string, unknown>, model: string, str
   if (body.openai_stream === true) return true;
   if (typeof body.stream_mode === 'string' && body.stream_mode.toLowerCase() === 'openai') return true;
   return model.toLowerCase() === 'sora';
+}
+
+function requestIdempotencyKey(request: NextRequest, fallbackPrefix: string): string {
+  return (
+    request.headers.get('Idempotency-Key') ||
+    request.headers.get('X-Idempotency-Key') ||
+    `${fallbackPrefix}-${crypto.randomUUID()}`
+  );
 }
 
 function inferMediaTypeFromUrl(url: string): MediaType | null {
@@ -530,6 +539,7 @@ export async function POST(request: NextRequest) {
     prompt: prompt || '',
     ...resolveImageSize(payload.size),
     images: imageInputs.length > 0 ? imageInputs : undefined,
+    idempotencyKey: requestIdempotencyKey(request, completionId),
   };
 
   if (!stream) {
