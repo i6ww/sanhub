@@ -16,6 +16,7 @@ import {
   Video,
 } from 'lucide-react';
 import { cn, fileToBase64 } from '@/lib/utils';
+import { fetchGenerationSubmit } from '@/lib/generation-client';
 import { toast } from '@/components/ui/toaster';
 import type { CharacterCard, DailyLimitConfig } from '@/types';
 import { formatDate } from '@/lib/utils';
@@ -337,7 +338,7 @@ export default function CharacterCardPage() {
             safetyInstructionSet: safetyInstructionSet.trim() || undefined,
           };
 
-      const response = await fetch('/api/generate/character-card', {
+      const response = await fetchGenerationSubmit('/api/generate/character-card', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

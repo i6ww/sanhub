@@ -11,6 +11,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { cn, fileToBase64 } from '@/lib/utils';
+import { fetchGenerationSubmit } from '@/lib/generation-client';
 import { toast } from '@/components/ui/toaster';
 import type { Task } from './result-gallery';
 
@@ -71,7 +72,7 @@ export function SoraPanel({ onTaskAdded }: SoraPanelProps) {
 
     try {
       // 提交任务
-      const res = await fetch('/api/generate/sora', {
+      const res = await fetchGenerationSubmit('/api/generate/sora', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

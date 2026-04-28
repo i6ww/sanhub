@@ -6,6 +6,7 @@
 import { getImageModelWithChannel } from './db';
 import { uploadToPicUI } from './picui';
 import { fetchWithRetry } from './http-retry';
+import { isTransientError } from './polling-utils';
 import type { GenerateResult } from '@/types';
 
 export interface ImageGenerateRequest {
@@ -312,37 +313,50 @@ const MODELSCOPE_ASYNC_MODELS = new Set([
 ]);
 
 async function pollModelScopeTask(baseUrl: string, apiKey: string, taskId: string): Promise<string> {
-  const maxAttempts = 60;
   const interval = 5000;
+  let consecutiveErrors = 0;
 
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const response = await fetchWithRetry(fetch, `${baseUrl}v1/tasks/${taskId}`, () => ({
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'X-ModelScope-Task-Type': 'image_generation',
-      },
-    }));
+  while (true) {
+    try {
+      const response = await fetchWithRetry(fetch, `${baseUrl}v1/tasks/${taskId}`, () => ({
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'X-ModelScope-Task-Type': 'image_generation',
+        },
+      }));
 
-    if (!response.ok) {
-      throw new Error(`ModelScope 任务查询失败 (${response.status})`);
-    }
+      if (!response.ok) {
+        throw new Error(
+          response.status >= 500
+            ? `Server Error: ${response.status}`
+            : `ModelScope 任务查询失败 (${response.status})`
+        );
+      }
 
-    const data = await response.json();
+      const data = await response.json();
+      consecutiveErrors = 0;
 
-    if (data.task_status === 'SUCCEED') {
-      const outputUrl = data.output_images?.[0];
-      if (!outputUrl) throw new Error('任务完成但未返回图片');
-      return outputUrl;
-    }
+      if (data.task_status === 'SUCCEED') {
+        const outputUrl = data.output_images?.[0];
+        if (!outputUrl) throw new Error('任务完成但未返回图片');
+        return outputUrl;
+      }
 
-    if (data.task_status === 'FAILED') {
-      throw new Error(data.message || '任务失败');
+      if (data.task_status === 'FAILED') {
+        throw new Error(data.message || '任务失败');
+      }
+    } catch (error) {
+      if (!isTransientError(error)) {
+        throw error;
+      }
+      consecutiveErrors += 1;
+      const retryDelayMs = Math.min(5000 * 2 ** (consecutiveErrors - 1), 60000);
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      continue;
     }
 
     await new Promise(resolve => setTimeout(resolve, interval));
   }
-
-  throw new Error('任务超时');
 }
 
 async function generateWithModelScope(

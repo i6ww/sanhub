@@ -3,6 +3,7 @@ import { getSystemConfig, getVideoChannels, getVideoChannel } from './db';
 import { fetch as undiciFetch, Agent, FormData, type RequestInit as UndiciRequestInit } from 'undici';
 import type { VideoChannel } from '@/types';
 import { fetchWithRetry } from './http-retry';
+import { GENERATION_SUBMIT_TIMEOUT_MS, isTransientError } from './polling-utils';
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'silent';
 
@@ -155,7 +156,7 @@ export async function applyVideoProxy(url: string): Promise<string> {
 }
 
 const DEFAULT_SORA_BASE_URL = 'http://localhost:8000';
-const THIRTY_MINUTES_MS = 30 * 60 * 1000;
+const SORA_REQUEST_TIMEOUT_MS = GENERATION_SUBMIT_TIMEOUT_MS;
 
 type SoraConfig = {
   apiKey: string;
@@ -211,13 +212,13 @@ async function getSoraConfig(options?: {
 // 创建自定义 Agent
 const soraAgent = new Agent({
   bodyTimeout: 0,
-  headersTimeout: THIRTY_MINUTES_MS,
-  keepAliveTimeout: THIRTY_MINUTES_MS,
-  keepAliveMaxTimeout: THIRTY_MINUTES_MS,
+  headersTimeout: SORA_REQUEST_TIMEOUT_MS,
+  keepAliveTimeout: SORA_REQUEST_TIMEOUT_MS,
+  keepAliveMaxTimeout: SORA_REQUEST_TIMEOUT_MS,
   pipelining: 0,
   connections: 30,
   connect: {
-    timeout: THIRTY_MINUTES_MS,
+    timeout: SORA_REQUEST_TIMEOUT_MS,
   },
 });
 
@@ -497,9 +498,8 @@ async function pollVideoCompletion(
 ): Promise<VideoTaskResponse> {
   let lastProgress = -1;
   let stallCount = 0;
-  let stalledAt: number | null = null;
   let failedCount = 0;
-  const maxFailedCount = 3;
+  let consecutiveStatusErrors = 0;
   const failedRetryDelayMs = 5000;
   const retryableFailedPatterns = ['stale in_progress timeout', 'stale in progress timeout'];
 
@@ -510,7 +510,23 @@ async function pollVideoCompletion(
   };
   
   while (true) {
-    const status = await getVideoStatus(videoId, channelId);
+    let status: VideoTaskResponse;
+    try {
+      status = await getVideoStatus(videoId, channelId);
+      consecutiveStatusErrors = 0;
+    } catch (error) {
+      if (!isTransientError(error)) {
+        throw error;
+      }
+      consecutiveStatusErrors += 1;
+      const retryDelayMs = Math.min(5000 * 2 ** (consecutiveStatusErrors - 1), 60000);
+      logWarn(
+        `[Sora API v5] Status fetch transient error (${consecutiveStatusErrors}), retrying after ${retryDelayMs}ms`,
+        error
+      );
+      await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+      continue;
+    }
     
     if (onProgress) {
       onProgress(status.progress, status.status);
@@ -547,12 +563,8 @@ async function pollVideoCompletion(
         logError('[Sora API v5] Video status failed', { videoId, error: errorMessage });
         throw new Error(errorMessage);
       }
-      if (failedCount >= maxFailedCount) {
-        logError('[Sora API v5] Video status failed after retries', { videoId, error: errorMessage });
-        throw new Error(errorMessage);
-      }
       logWarn(
-        `[Sora API v5] Status failed (${failedCount}/${maxFailedCount}), retrying after ${failedRetryDelayMs}ms: ${errorMessage}`
+        `[Sora API v5] Status failed (${failedCount}), retrying after ${failedRetryDelayMs}ms: ${errorMessage}`
       );
       await new Promise(resolve => setTimeout(resolve, failedRetryDelayMs));
       continue;
@@ -563,20 +575,8 @@ async function pollVideoCompletion(
     // 检测停滞
     if (status.progress === lastProgress) {
       stallCount++;
-      if (stalledAt === null) {
-        stalledAt = Date.now();
-      }
-      if (Date.now() - stalledAt >= THIRTY_MINUTES_MS) {
-        logError('[Sora API v5] Video stalled', {
-          videoId,
-          status: status.status,
-          progress: status.progress,
-        });
-        throw new Error('视频生成超时：进度长时间无变化');
-      }
     } else {
       stallCount = 0;
-      stalledAt = null;
       lastProgress = status.progress;
     }
     

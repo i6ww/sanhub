@@ -26,7 +26,12 @@ import {
   Image as ImageIcon,
 } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
-import { GENERATION_POLL_TIMEOUT_MS } from '@/lib/polling-utils';
+import { fetchGenerationSubmit } from '@/lib/generation-client';
+import {
+  GENERATION_POLL_TIMEOUT_MS,
+  getPollingInterval,
+  isTransientError,
+} from '@/lib/polling-utils';
 import { cn } from '@/lib/utils';
 import type { CharacterCard, WorkspaceData, WorkspaceEdge, WorkspaceNode, WorkspaceNodeType, ChatModel, SafeImageModel, SafeVideoModel } from '@/types';
 
@@ -707,24 +712,17 @@ export default function WorkspaceEditorPage() {
       abortControllersRef.current.set(nodeId, controller);
       const startedAt = Date.now();
       let consecutiveErrors = 0;
-      const maxConsecutiveErrors = 5;
 
       const poll = async () => {
         if (controller.signal.aborted) return;
-        if (Date.now() - startedAt >= GENERATION_POLL_TIMEOUT_MS) {
-          updateNodeData(nodeId, { status: 'failed', errorMessage: '任务超时' });
-          abortControllersRef.current.delete(nodeId);
-          return;
-        }
         try {
           const res = await fetch(`/api/generate/status/${taskId}`, {
             signal: controller.signal,
           });
           const data = await res.json();
           if (!res.ok) {
-            throw new Error(data.error || '查询任务状态失败');
+            throw new Error(data.error || `Server Error: ${res.status}`);
           }
-          // Reset error counter on success
           consecutiveErrors = 0;
           const status = data.data.status as string;
           if (status === 'completed') {
@@ -747,23 +745,15 @@ export default function WorkspaceEditorPage() {
             abortControllersRef.current.delete(nodeId);
           } else {
             updateNodeData(nodeId, { status: status as WorkspaceNode['data']['status'] });
-            setTimeout(poll, 10000);
+            const taskType = data.data.type?.includes('video') ? 'video' : 'image';
+            setTimeout(poll, getPollingInterval(Date.now() - startedAt, taskType));
           }
         } catch (error) {
           if ((error as Error).name === 'AbortError') return;
           consecutiveErrors += 1;
           const errMsg = error instanceof Error ? error.message : '网络错误';
-          // Retry on transient network errors (socket closed, timeout, etc.)
-          const isTransientError =
-            errMsg.includes('socket') ||
-            errMsg.includes('Socket') ||
-            errMsg.includes('ECONNRESET') ||
-            errMsg.includes('ETIMEDOUT') ||
-            errMsg.includes('network') ||
-            errMsg.includes('fetch');
-          if (isTransientError && consecutiveErrors < maxConsecutiveErrors) {
-            console.warn(`[Poll] Transient error (${consecutiveErrors}/${maxConsecutiveErrors}), retrying...`, errMsg);
-            // Exponential backoff: 5s, 10s, 20s, 40s...
+          if (isTransientError(error)) {
+            console.warn(`[Poll] Transient error (${consecutiveErrors}), retrying...`, errMsg);
             const delay = Math.min(5000 * Math.pow(2, consecutiveErrors - 1), 60000);
             setTimeout(poll, delay);
             return;
@@ -866,7 +856,7 @@ export default function WorkspaceEditorPage() {
         updateNodeData(node.id, { status: 'pending', errorMessage: undefined });
         
         // 使用统一的图像生成 API
-        const res = await fetch('/api/generate/image', {
+        const res = await fetchGenerationSubmit('/api/generate/image', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -909,7 +899,7 @@ export default function WorkspaceEditorPage() {
           referenceImageUrl = node.data.uploadedImages[0];
         }
 
-        const res = await fetch('/api/generate/sora', {
+        const res = await fetchGenerationSubmit('/api/generate/sora', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

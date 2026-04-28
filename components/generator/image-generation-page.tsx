@@ -23,6 +23,7 @@ import { useSiteConfig } from '@/components/providers/site-config-provider';
 import { CustomSelect } from '@/components/ui/select-custom';
 import {
   deleteGenerationRecord,
+  fetchGenerationSubmit,
   fetchPendingGenerationTasks,
   fetchRecentUserGenerations,
   filterGenerationsByKind,
@@ -561,7 +562,7 @@ export function ImageGenerationPage({
   ) => {
     if (!currentModel) throw new Error('请选择模型');
 
-    const res = await fetch('/api/generate/image', {
+    const res = await fetchGenerationSubmit('/api/generate/image', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

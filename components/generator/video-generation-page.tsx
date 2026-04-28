@@ -22,6 +22,7 @@ import { useSiteConfig } from '@/components/providers/site-config-provider';
 import type { Generation, CharacterCard, SafeVideoModel, DailyLimitConfig } from '@/types';
 import {
   deleteGenerationRecord,
+  fetchGenerationSubmit,
   fetchPendingGenerationTasks,
   fetchRecentUserGenerations,
   filterGenerationsByKind,
@@ -648,7 +649,7 @@ export function VideoGenerationView({
     }
   ) => {
     const fallbackModel = buildModelId(config.aspectRatio, config.duration);
-    const res = await fetch('/api/generate/sora', {
+    const res = await fetchGenerationSubmit('/api/generate/sora', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

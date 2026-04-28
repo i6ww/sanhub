@@ -1,5 +1,6 @@
 import type { Generation } from '@/types';
 import {
+  GENERATION_SUBMIT_TIMEOUT_MS,
   getFriendlyErrorMessage,
   getPollingInterval,
   isTransientError,
@@ -57,6 +58,37 @@ export function isVideoGenerationType(type?: string): boolean {
 
 export function isImageGenerationType(type?: string): boolean {
   return Boolean(type && !isVideoGenerationType(type) && type.endsWith('-image'));
+}
+
+export async function fetchGenerationSubmit(
+  input: RequestInfo | URL,
+  init: RequestInit = {}
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GENERATION_SUBMIT_TIMEOUT_MS);
+  const upstreamSignal = init.signal;
+
+  const abortHandler = () => {
+    controller.abort();
+  };
+
+  try {
+    if (upstreamSignal) {
+      if (upstreamSignal.aborted) {
+        controller.abort();
+      } else {
+        upstreamSignal.addEventListener('abort', abortHandler, { once: true });
+      }
+    }
+
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+    upstreamSignal?.removeEventListener('abort', abortHandler);
+  }
 }
 
 export function buildReusableImageReference(
@@ -245,8 +277,6 @@ type PollGenerationTaskOptions = {
   onTimeout: () => void | Promise<void>;
 };
 
-const MAX_CONSECUTIVE_ERRORS = 5;
-
 export async function pollGenerationTask(
   options: PollGenerationTaskOptions
 ): Promise<void> {
@@ -285,7 +315,7 @@ export async function pollGenerationTask(
       consecutiveErrors += 1;
       const message = error instanceof Error ? error.message : '网络错误';
 
-      if (isTransientError(error) && consecutiveErrors < MAX_CONSECUTIVE_ERRORS) {
+      if (isTransientError(error)) {
         const retryDelay = Math.min(5000 * 2 ** (consecutiveErrors - 1), 60000);
         await waitFor(retryDelay, signal);
         continue;

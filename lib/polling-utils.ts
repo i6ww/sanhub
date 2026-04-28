@@ -1,11 +1,8 @@
 export type TaskType = 'image' | 'video';
 
-export const GENERATION_POLL_TIMEOUT_MS = 30 * 60 * 1000;
-
-const MAX_DURATION_MS: Record<TaskType, number> = {
-  image: GENERATION_POLL_TIMEOUT_MS,
-  video: GENERATION_POLL_TIMEOUT_MS,
-};
+export const GENERATION_TIMEOUT_MS = 30 * 60 * 1000;
+export const GENERATION_SUBMIT_TIMEOUT_MS = GENERATION_TIMEOUT_MS;
+export const GENERATION_POLL_TIMEOUT_MS = GENERATION_TIMEOUT_MS;
 
 export function getPollingInterval(elapsedMs: number, taskType: TaskType): number {
   const isFirstMinute = elapsedMs < 60_000;
@@ -16,7 +13,8 @@ export function getPollingInterval(elapsedMs: number, taskType: TaskType): numbe
 }
 
 export function shouldContinuePolling(elapsedMs: number, taskType: TaskType): boolean {
-  return elapsedMs < MAX_DURATION_MS[taskType];
+  void taskType;
+  return elapsedMs < GENERATION_POLL_TIMEOUT_MS;
 }
 
 export function isTransientError(error: unknown): boolean {
