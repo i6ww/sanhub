@@ -2,7 +2,12 @@
 import fs from 'fs';
 import { promises as fsp } from 'fs';
 import path from 'path';
-import { uploadToPicUI } from './picui';
+import {
+  resolveDefaultImageBucket,
+  uploadBufferToImageBucket,
+  uploadToPicUI,
+} from './picui';
+import { fetchWithRetry } from './http-retry';
 
 // ========================================
 // 媒体文件存储
@@ -11,6 +16,15 @@ import { uploadToPicUI } from './picui';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 const MEDIA_DIR = path.join(DATA_DIR, 'media');
+const MAX_REMOTE_MEDIA_BYTES = Math.max(
+  1,
+  Number(process.env.MEDIA_REMOTE_CACHE_MAX_BYTES) || 512 * 1024 * 1024
+);
+
+type SaveMediaOptions = {
+  publicBaseUrl?: string;
+  filename?: string;
+};
 
 // 确保目录存在
 async function ensureMediaDir(): Promise<void> {
@@ -36,9 +50,60 @@ function getExtension(mimeType: string): string {
     'image/gif': 'gif',
     'image/webp': 'webp',
     'video/mp4': 'mp4',
+    'video/quicktime': 'mov',
     'video/webm': 'webm',
   };
   return map[mimeType] || 'bin';
+}
+
+function isRemoteUrl(value: string): boolean {
+  return value.startsWith('http://') || value.startsWith('https://');
+}
+
+function filenameFromUrl(id: string, mediaUrl: string, mimeType: string): string {
+  try {
+    const parsed = new URL(mediaUrl);
+    const basename = path.basename(parsed.pathname);
+    if (basename && basename !== '/' && /\.[a-z0-9]{2,5}$/i.test(basename)) {
+      return `${id}-${basename}`;
+    }
+  } catch {
+    // ignore
+  }
+  return `${id}.${getExtension(mimeType)}`;
+}
+
+async function downloadRemoteMedia(mediaUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
+  const response = await fetchWithRetry(fetch, mediaUrl, () => ({
+    method: 'GET',
+    headers: {
+      Accept: 'image/*,video/*,*/*',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    },
+  }), {
+    attempts: 4,
+    baseDelayMs: 500,
+    maxDelayMs: 6000,
+  });
+
+  if (!response.ok) {
+    const details = await response.text().catch(() => '');
+    throw new Error(`remote media download failed (${response.status})${details ? `: ${details.slice(0, 200)}` : ''}`);
+  }
+
+  const contentLength = Number(response.headers.get('content-length') || 0);
+  if (contentLength > MAX_REMOTE_MEDIA_BYTES) {
+    throw new Error(`remote media exceeds cache limit: ${contentLength} bytes`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  if (buffer.length > MAX_REMOTE_MEDIA_BYTES) {
+    throw new Error(`remote media exceeds cache limit: ${buffer.length} bytes`);
+  }
+
+  const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream';
+  return { buffer, mimeType };
 }
 
 /**
@@ -93,21 +158,59 @@ export async function saveMediaToFile(id: string, dataUrl: string): Promise<stri
  * @param dataUrl base64 data URL
  * @returns 图床 URL、本地文件路径或原始 data URL
  */
-export async function saveMediaAsync(id: string, dataUrl: string): Promise<string> {
-  // 如果不是 data URL，直接返回（可能是外部 URL）
+export async function saveMediaAsync(
+  id: string,
+  dataUrl: string,
+  options: SaveMediaOptions = {}
+): Promise<string> {
+  const configuredBucket = await resolveDefaultImageBucket();
+
+  if (isRemoteUrl(dataUrl)) {
+    if (!configuredBucket) {
+      return dataUrl;
+    }
+
+    try {
+      const remote = await downloadRemoteMedia(dataUrl);
+      const filename = options.filename || filenameFromUrl(id, dataUrl, remote.mimeType);
+      const uploadedUrl = await uploadBufferToImageBucket(
+        remote.buffer,
+        remote.mimeType,
+        filename,
+        { publicBaseUrl: options.publicBaseUrl }
+      );
+      if (uploadedUrl) {
+        console.log(`[MediaStorage] Cached remote media to bucket: ${uploadedUrl}`);
+        return uploadedUrl;
+      }
+    } catch (error) {
+      console.warn('[MediaStorage] Remote media cache failed, keeping original URL:', error);
+    }
+
+    return dataUrl;
+  }
+
+  // 如果不是 data URL，直接返回（可能是其他外部标识）
   if (!dataUrl.startsWith('data:')) {
     return dataUrl;
   }
 
   // 优先尝试上传到默认图片桶
-  try {
-    const picuiUrl = await uploadToPicUI(dataUrl, `${id}.jpg`);
-    if (picuiUrl) {
-      console.log(`[MediaStorage] Uploaded to remote bucket: ${picuiUrl}`);
-      return picuiUrl;
+  if (configuredBucket) {
+    try {
+      const parsed = parseDataUrl(dataUrl);
+      const filename = options.filename || `${id}.${getExtension(parsed?.mimeType || 'image/jpeg')}`;
+      const picuiUrl = await uploadToPicUI(dataUrl, filename, { publicBaseUrl: options.publicBaseUrl });
+      if (picuiUrl) {
+        console.log(`[MediaStorage] Uploaded to remote bucket: ${picuiUrl}`);
+        return picuiUrl;
+      }
+    } catch (error) {
+      console.warn('[MediaStorage] Remote upload failed, keeping data URL:', error);
     }
-  } catch (error) {
-    console.warn('[MediaStorage] Remote upload failed, falling back to local storage:', error);
+
+    // 已配置远程桶时不再落本地，避免 S3/PicUI 开启后继续占用本地磁盘。
+    return dataUrl;
   }
 
   // 回退到本地文件存储

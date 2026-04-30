@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { ImageBucketConfig } from '@/types';
 import { getSystemConfig } from './db';
 import { fetch as undiciFetch, File, FormData } from 'undici';
@@ -13,6 +13,19 @@ type UploadPayload = {
   objectKey: string;
 };
 
+type UploadOptions = {
+  publicBaseUrl?: string;
+  preferDirectS3Url?: boolean;
+};
+
+export type S3CachedObject = {
+  buffer: Buffer;
+  contentType: string;
+  contentLength: number;
+  etag?: string;
+  lastModified?: Date;
+};
+
 const EXTENSION_BY_MIME: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/jpg': 'jpg',
@@ -20,6 +33,10 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   'image/gif': 'gif',
   'image/webp': 'webp',
   'image/bmp': 'bmp',
+  'video/mp4': 'mp4',
+  'video/mpeg': 'mpeg',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
 };
 
 const s3Clients = new Map<string, S3Client>();
@@ -41,17 +58,39 @@ function normalizeSegment(value: string): string {
     .replace(/^\/+|\/+$/g, '');
 }
 
+function normalizeS3ObjectKey(value: string): string {
+  return value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+    .split('/')
+    .filter((segment) => segment && segment !== '.' && segment !== '..')
+    .join('/');
+}
+
 function buildObjectKey(bucket: ImageBucketConfig, filename: string): string {
   const normalizedFilename = normalizeSegment(filename).split('/').pop() || filename;
   const prefix = normalizeSegment(bucket.pathPrefix || '');
   return prefix ? `${prefix}/${normalizedFilename}` : normalizedFilename;
 }
 
-function encodeObjectKey(key: string): string {
-  return key
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
+function isS3CacheKeyAllowed(bucket: ImageBucketConfig, objectKey: string): boolean {
+  const normalizedKey = normalizeS3ObjectKey(objectKey);
+  if (!normalizedKey) return false;
+
+  const prefix = normalizeSegment(bucket.pathPrefix || '');
+  if (!prefix) return true;
+  return normalizedKey !== prefix && normalizedKey.startsWith(`${prefix}/`);
+}
+
+function getExtensionForMime(mimeType: string): string {
+  return EXTENSION_BY_MIME[mimeType.toLowerCase().split(';')[0]?.trim() || ''] || 'bin';
+}
+
+function ensureFilenameExtension(filename: string, extension: string): string {
+  const trimmed = normalizeSegment(filename).split('/').pop() || `media_${Date.now()}.${extension}`;
+  if (/\.[a-z0-9]{2,5}$/i.test(trimmed)) return trimmed;
+  return `${trimmed}.${extension}`;
 }
 
 function parseUploadPayload(base64Data: string, filename?: string, bucket?: ImageBucketConfig): UploadPayload {
@@ -66,8 +105,8 @@ function parseUploadPayload(base64Data: string, filename?: string, bucket?: Imag
     }
   }
 
-  const extension = EXTENSION_BY_MIME[mimeType] || 'jpg';
-  const safeFilename = filename?.trim() || `image_${Date.now()}.${extension}`;
+  const extension = getExtensionForMime(mimeType);
+  const safeFilename = ensureFilenameExtension(filename?.trim() || `image_${Date.now()}`, extension);
   const objectKey = buildObjectKey(bucket || { pathPrefix: '' } as ImageBucketConfig, safeFilename);
 
   return {
@@ -79,7 +118,27 @@ function parseUploadPayload(base64Data: string, filename?: string, bucket?: Imag
   };
 }
 
-function resolveDefaultBucket(): Promise<ImageBucketConfig | null> {
+function buildUploadPayloadFromBuffer(
+  buffer: Buffer,
+  mimeType: string,
+  filename?: string,
+  bucket?: ImageBucketConfig
+): UploadPayload {
+  const normalizedMimeType = mimeType.split(';')[0]?.trim().toLowerCase() || 'application/octet-stream';
+  const extension = getExtensionForMime(normalizedMimeType);
+  const safeFilename = ensureFilenameExtension(filename?.trim() || `media_${Date.now()}`, extension);
+  const objectKey = buildObjectKey(bucket || { pathPrefix: '' } as ImageBucketConfig, safeFilename);
+
+  return {
+    buffer,
+    extension,
+    filename: safeFilename,
+    mimeType: normalizedMimeType,
+    objectKey,
+  };
+}
+
+export function resolveDefaultImageBucket(): Promise<ImageBucketConfig | null> {
   return getSystemConfig().then((config) => {
     const buckets = config.imageStorage?.buckets || [];
     const enabledBuckets = buckets.filter((bucket) => bucket.enabled);
@@ -96,6 +155,24 @@ function resolveDefaultBucket(): Promise<ImageBucketConfig | null> {
 
     return enabledBuckets[0] || null;
   });
+}
+
+async function resolveS3CacheBucket(bucketId?: string): Promise<ImageBucketConfig | null> {
+  const config = await getSystemConfig();
+  const buckets = (config.imageStorage?.buckets || []).filter(
+    (bucket) => bucket.enabled && bucket.provider === 's3-compatible'
+  );
+
+  if (bucketId) {
+    return buckets.find((bucket) => bucket.id === bucketId) || null;
+  }
+
+  if (config.imageStorage?.defaultBucketId) {
+    const defaultBucket = buckets.find((bucket) => bucket.id === config.imageStorage.defaultBucketId);
+    if (defaultBucket) return defaultBucket;
+  }
+
+  return buckets[0] || null;
 }
 
 async function uploadToPicuiBucket(
@@ -157,7 +234,32 @@ function getS3Client(bucket: ImageBucketConfig): S3Client {
   return client;
 }
 
-function buildS3PublicUrl(bucket: ImageBucketConfig, objectKey: string): string {
+function normalizePublicBaseUrl(value?: string): string {
+  return (value || process.env.SANHUB_PUBLIC_BASE_URL || process.env.NEXTAUTH_URL || '')
+    .trim()
+    .replace(/\/$/, '');
+}
+
+function buildPublicPath(path: string, options?: UploadOptions): string {
+  const publicBaseUrl = normalizePublicBaseUrl(options?.publicBaseUrl);
+  return publicBaseUrl ? `${publicBaseUrl}${path}` : path;
+}
+
+function buildS3CacheUrl(bucket: ImageBucketConfig, objectKey: string, options?: UploadOptions): string {
+  const params = new URLSearchParams();
+  params.set('key', objectKey);
+  params.set('bucket', bucket.id);
+  return buildPublicPath(`/cache/s3?${params.toString()}`, options);
+}
+
+function encodeObjectKey(key: string): string {
+  return key
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/');
+}
+
+function buildDirectS3PublicUrl(bucket: ImageBucketConfig, objectKey: string): string {
   const encodedKey = encodeObjectKey(objectKey);
   const publicBaseUrl = bucket.publicBaseUrl?.trim();
 
@@ -171,7 +273,8 @@ function buildS3PublicUrl(bucket: ImageBucketConfig, objectKey: string): string 
 
 async function uploadToS3Bucket(
   bucket: ImageBucketConfig,
-  payload: UploadPayload
+  payload: UploadPayload,
+  options?: UploadOptions
 ): Promise<string | null> {
   if (!bucket.baseUrl || !bucket.apiKey || !bucket.secretKey || !bucket.bucketName) {
     return null;
@@ -188,14 +291,33 @@ async function uploadToS3Bucket(
     })
   );
 
-  return buildS3PublicUrl(bucket, payload.objectKey);
+  return options?.preferDirectS3Url
+    ? buildDirectS3PublicUrl(bucket, payload.objectKey)
+    : buildS3CacheUrl(bucket, payload.objectKey, options);
+}
+
+async function uploadPayloadToBucket(
+  bucket: ImageBucketConfig,
+  payload: UploadPayload,
+  options?: UploadOptions
+): Promise<string | null> {
+  if (bucket.provider === 's3-compatible') {
+    return await uploadToS3Bucket(bucket, payload, options);
+  }
+
+  if (!payload.mimeType.startsWith('image/')) {
+    return null;
+  }
+
+  return await uploadToPicuiBucket(bucket, payload);
 }
 
 export async function uploadToImageBucket(
   base64Data: string,
-  filename?: string
+  filename?: string,
+  options?: UploadOptions
 ): Promise<string | null> {
-  const bucket = await resolveDefaultBucket();
+  const bucket = await resolveDefaultImageBucket();
   if (!bucket) {
     console.log('[ImageBucket] No enabled bucket configured, skip upload');
     return null;
@@ -204,10 +326,29 @@ export async function uploadToImageBucket(
   const payload = parseUploadPayload(base64Data, filename, bucket);
 
   try {
-    if (bucket.provider === 's3-compatible') {
-      return await uploadToS3Bucket(bucket, payload);
-    }
-    return await uploadToPicuiBucket(bucket, payload);
+    return await uploadPayloadToBucket(bucket, payload, options);
+  } catch (error) {
+    console.error('[ImageBucket] Upload failed:', error);
+    return null;
+  }
+}
+
+export async function uploadBufferToImageBucket(
+  buffer: Buffer,
+  mimeType: string,
+  filename?: string,
+  options?: UploadOptions
+): Promise<string | null> {
+  const bucket = await resolveDefaultImageBucket();
+  if (!bucket) {
+    console.log('[ImageBucket] No enabled bucket configured, skip upload');
+    return null;
+  }
+
+  const payload = buildUploadPayloadFromBuffer(buffer, mimeType, filename, bucket);
+
+  try {
+    return await uploadPayloadToBucket(bucket, payload, options);
   } catch (error) {
     console.error('[ImageBucket] Upload failed:', error);
     return null;
@@ -216,15 +357,67 @@ export async function uploadToImageBucket(
 
 export async function uploadToPicUI(
   base64Data: string,
-  filename?: string
+  filename?: string,
+  options?: UploadOptions
 ): Promise<string | null> {
-  return uploadToImageBucket(base64Data, filename);
+  return uploadToImageBucket(base64Data, filename, options);
 }
 
 export async function uploadImageOrKeepBase64(
   base64Data: string,
-  filename?: string
+  filename?: string,
+  options?: UploadOptions
 ): Promise<string> {
-  const url = await uploadToImageBucket(base64Data, filename);
+  const url = await uploadToImageBucket(base64Data, filename, options);
   return url || base64Data;
+}
+
+async function streamToBuffer(body: unknown): Promise<Buffer> {
+  if (!body) return Buffer.alloc(0);
+
+  const byteArrayStream = body as { transformToByteArray?: () => Promise<Uint8Array> };
+  if (typeof byteArrayStream.transformToByteArray === 'function') {
+    return Buffer.from(await byteArrayStream.transformToByteArray());
+  }
+
+  const chunks: Buffer[] = [];
+  for await (const chunk of body as AsyncIterable<Uint8Array | Buffer | string>) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
+export async function getS3CachedObject(
+  objectKey: string,
+  bucketId?: string
+): Promise<S3CachedObject> {
+  const normalizedKey = normalizeS3ObjectKey(objectKey);
+  if (!normalizedKey) {
+    throw new Error('S3 key is required');
+  }
+
+  const bucket = await resolveS3CacheBucket(bucketId);
+  if (!bucket) {
+    throw new Error('S3 bucket is not configured');
+  }
+  if (!isS3CacheKeyAllowed(bucket, normalizedKey)) {
+    throw new Error('S3 key is outside the configured cache prefix');
+  }
+
+  const client = getS3Client(bucket);
+  const result = await client.send(
+    new GetObjectCommand({
+      Bucket: bucket.bucketName,
+      Key: normalizedKey,
+    })
+  );
+  const buffer = await streamToBuffer(result.Body);
+
+  return {
+    buffer,
+    contentType: result.ContentType || 'application/octet-stream',
+    contentLength: Number(result.ContentLength || buffer.length),
+    etag: result.ETag,
+    lastModified: result.LastModified,
+  };
 }
