@@ -571,7 +571,7 @@ export function ImageGenerationPage({
         prompt: taskPrompt,
         aspectRatio,
         imageSize: currentModel.features.imageSize ? imageSize : undefined,
-        quality: (currentModel.channelType === 'openai-compatible' || currentModel.channelType === 'openai-chat') ? quality : undefined,
+        quality: (currentModel.channelType === 'openai-compatible' || currentModel.channelType === 'openai-chat') && currentModel.apiModel.toLowerCase().includes('gpt-image-2') ? quality : undefined,
         images: compressedImages || [],
         referenceImageUrl: externalReference?.sourceUrl,
       }),
@@ -822,7 +822,7 @@ export function ImageGenerationPage({
               <span className="text-xs text-foreground/40">{getCurrentResolutionDisplay()}</span>
             )}
 
-            {currentModel && (currentModel.channelType === 'openai-compatible' || currentModel.channelType === 'openai-chat') && (
+            {currentModel && (currentModel.channelType === 'openai-compatible' || currentModel.channelType === 'openai-chat') && currentModel.apiModel.toLowerCase().includes('gpt-image-2') && (
               <div className="w-[100px]">
                 <CustomSelect
                   value={quality}
