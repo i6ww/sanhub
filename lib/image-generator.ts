@@ -68,7 +68,7 @@ export type ResolvedImageTarget = {
   usedModelFromMapping: boolean;
 };
 
-const PIXEL_SIZE_PATTERN = /^\d+x\d+$/i;
+const PIXEL_SIZE_PATTERN = /^\d+[x×]\d+$/i;
 const ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
 
 const isSizeValue = (value: string): boolean =>
@@ -163,6 +163,11 @@ async function generateWithOpenAI(
       '2:3': '1024x1536',
     };
     payload.size = sizeMap[request.aspectRatio] || '1024x1024';
+  }
+
+  // 统一乘号（管理员可能填了 Unicode ×）
+  if (typeof payload.size === 'string') {
+    payload.size = payload.size.replace(/×/g, 'x');
   }
   console.log('[generateWithOpenAI] payload.size:', payload.size);
 

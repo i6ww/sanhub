@@ -8,7 +8,7 @@ export const MAX_V1_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_V1_IMAGE_COUNT = 10;
 
 const ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
-const PIXEL_SIZE_PATTERN = /^\d+x\d+$/i;
+const PIXEL_SIZE_PATTERN = /^\d+[x×]\d+$/i;
 
 type ImageLikeObject = {
   url?: unknown;
@@ -210,17 +210,17 @@ export function resolveImageSize(size: unknown): Pick<ImageGenerateRequest, 'siz
   }
 
   if (PIXEL_SIZE_PATTERN.test(normalized)) {
-    const [w, h] = normalized.split('x').map(Number);
+    const normalizedSize = normalized.replace(/×/g, 'x');
+    const [w, h] = normalizedSize.split('x').map(Number);
     if (w && h) {
       const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
       const divisor = gcd(w, h);
-      // 保留原始 size 作为后备，同时提供 aspectRatio 用于分辨率映射表
-      return { size: normalized, aspectRatio: `${w / divisor}:${h / divisor}` };
+      return { size: normalizedSize, aspectRatio: `${w / divisor}:${h / divisor}` };
     }
     return {};
   }
 
-  return { size: normalized };
+  return { size: normalized.replace(/×/g, 'x') };
 }
 
 export async function resolveImageModelId(model?: string): Promise<string | null> {
