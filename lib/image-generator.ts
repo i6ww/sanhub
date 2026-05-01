@@ -3,6 +3,7 @@
  * 根据渠道类型动态选择请求方式
  */
 
+import { fetch as undiciFetch, Agent } from 'undici';
 import { getImageModelWithChannel } from './db';
 import { uploadToPicUI } from './picui';
 import { fetchWithRetry } from './http-retry';
@@ -36,7 +37,7 @@ function getNextApiKey(keys: string, channelId: string): string {
 
 // 下载图片并转换为 base64
 async function downloadImageAsBase64(imageUrl: string): Promise<string> {
-  const response = await fetchWithRetry(fetch, imageUrl);
+  const response = await fetchWithRetry(undiciFetch, imageUrl, () => ({ dispatcher: imageAgent }));
   if (!response.ok) {
     throw new Error(`下载图片失败 (${response.status})`);
   }
@@ -75,6 +76,19 @@ const isSizeValue = (value: string): boolean =>
   PIXEL_SIZE_PATTERN.test(value) || ASPECT_RATIO_PATTERN.test(value);
 
 const GENERATION_POST_RETRY_OPTIONS = { attempts: 1 };
+const IMAGE_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
+
+const imageAgent = new Agent({
+  bodyTimeout: 0,
+  headersTimeout: IMAGE_REQUEST_TIMEOUT_MS,
+  keepAliveTimeout: IMAGE_REQUEST_TIMEOUT_MS,
+  keepAliveMaxTimeout: IMAGE_REQUEST_TIMEOUT_MS,
+  pipelining: 0,
+  connections: 30,
+  connect: {
+    timeout: IMAGE_REQUEST_TIMEOUT_MS,
+  },
+});
 
 function buildOpenAIImageInput(
   images: ImageGenerateRequest['images']
@@ -190,7 +204,7 @@ async function generateWithOpenAI(
     payload.image = imageInput;
   }
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${key}`,
@@ -203,6 +217,7 @@ async function generateWithOpenAI(
         : {}),
     },
     body: JSON.stringify(payload),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -271,7 +286,7 @@ async function generateWithGemini(
     (generationConfig.imageConfig as Record<string, unknown>).imageSize = request.imageSize;
   }
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -286,6 +301,7 @@ async function generateWithGemini(
       contents: [{ parts }],
       generationConfig,
     }),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -338,11 +354,12 @@ async function pollModelScopeTask(baseUrl: string, apiKey: string, taskId: strin
 
   while (true) {
     try {
-      const response = await fetchWithRetry(fetch, `${baseUrl}v1/tasks/${taskId}`, () => ({
+      const response = await fetchWithRetry(undiciFetch, `${baseUrl}v1/tasks/${taskId}`, () => ({
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'X-ModelScope-Task-Type': 'image_generation',
         },
+        dispatcher: imageAgent,
       }));
 
       if (!response.ok) {
@@ -409,7 +426,7 @@ async function generateWithModelScope(
     ...(imageUrls.length > 0 && { image_url: imageUrls }),
   };
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${key}`,
@@ -423,6 +440,7 @@ async function generateWithModelScope(
         : {}),
     },
     body: JSON.stringify(payload),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -483,7 +501,7 @@ async function generateWithGitee(
     ...(size && { size }),
   };
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${key}`,
@@ -496,6 +514,7 @@ async function generateWithGitee(
         : {}),
     },
     body: JSON.stringify(payload),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -547,7 +566,7 @@ async function generateWithGiteeUpscale(
     return formData;
   };
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -559,6 +578,7 @@ async function generateWithGiteeUpscale(
         : {}),
     },
     body: buildFormData(),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -604,7 +624,7 @@ async function generateWithGiteeMatting(
     return formData;
   };
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${apiKey}`,
@@ -617,6 +637,7 @@ async function generateWithGiteeMatting(
         : {}),
     },
     body: buildFormData(),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -683,7 +704,7 @@ async function generateWithOpenAIChat(
     stream: true,
   };
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${key}`,
@@ -696,6 +717,7 @@ async function generateWithOpenAIChat(
         : {}),
     },
     body: JSON.stringify(payload),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
@@ -871,7 +893,7 @@ async function generateWithSora(
     payload.input_image = img.data;
   }
 
-  const response = await fetchWithRetry(fetch, url, () => ({
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${key}`,
@@ -884,6 +906,7 @@ async function generateWithSora(
         : {}),
     },
     body: JSON.stringify(payload),
+    dispatcher: imageAgent,
   }), GENERATION_POST_RETRY_OPTIONS);
 
   if (!response.ok) {
