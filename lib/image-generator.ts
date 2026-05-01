@@ -388,9 +388,14 @@ async function generateWithGemini(
 
   const data: any = await response.json();
   const generatedImages: string[] = [];
+  const responseImageUrl = pickImageUrl(data);
+
+  if (responseImageUrl) {
+    generatedImages.push(responseImageUrl);
+  }
 
   const responseParts = data.candidates?.[0]?.content?.parts;
-  if (Array.isArray(responseParts)) {
+  if (generatedImages.length === 0 && Array.isArray(responseParts)) {
     for (const part of responseParts) {
       const inlineData = part.inlineData || part.inline_data;
       const remoteImageUrl = pickImageUrl(part) || pickImageUrl(inlineData);
