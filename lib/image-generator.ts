@@ -421,6 +421,70 @@ function inferGeminiImageSize(size?: string): string | undefined {
   return '1K';
 }
 
+function normalizedPixelSize(size?: string): string | undefined {
+  if (!size) return undefined;
+  const normalized = size.trim().replace(/×/g, 'x');
+  return PIXEL_SIZE_PATTERN.test(normalized) ? normalized : undefined;
+}
+
+function aspectRatioOfSize(size?: string): string | undefined {
+  const normalized = normalizedPixelSize(size);
+  if (!normalized) return undefined;
+  const [width, height] = normalized.split('x').map(Number);
+  if (!width || !height) return undefined;
+  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+  const divisor = gcd(width, height);
+  return `${width / divisor}:${height / divisor}`;
+}
+
+function compatibleGeminiSizeForConfig(aspectRatio?: string, imageSize?: string): string | undefined {
+  if (!aspectRatio) return undefined;
+  const normalizedImageSize = (imageSize || '2K').toUpperCase();
+  const sizeMap: Record<string, Record<string, string>> = {
+    '512': {
+      '1:1': '512x512',
+    },
+    '1K': {
+      '1:1': '1024x1024',
+      '4:3': '1024x768',
+      '3:4': '768x1024',
+    },
+    '2K': {
+      '1:1': '2048x2048',
+      '16:9': '2048x1152',
+      '9:16': '1152x2048',
+      '4:3': '2048x1536',
+      '3:4': '1536x2048',
+      '3:2': '1536x1024',
+      '2:3': '1024x1536',
+    },
+    '4K': {
+      '1:1': '4096x4096',
+      '16:9': '3840x2160',
+      '9:16': '2160x3840',
+      '4:3': '4096x3072',
+      '3:4': '3072x4096',
+      '3:2': '5056x3392',
+      '2:3': '3392x5056',
+    },
+  };
+  return sizeMap[normalizedImageSize]?.[aspectRatio] || sizeMap['2K'][aspectRatio];
+}
+
+function resolveGeminiCompatibleSize(request: ImageGenerateRequest, targetSize?: string): string | undefined {
+  if (targetSize) return targetSize.replace(/×/g, 'x');
+  const explicitPixelSize = normalizedPixelSize(request.size);
+  if (request.aspectRatio) {
+    const explicitSizeRatio = aspectRatioOfSize(explicitPixelSize);
+    if (explicitPixelSize && explicitSizeRatio === request.aspectRatio) {
+      return explicitPixelSize;
+    }
+    const mappedSize = compatibleGeminiSizeForConfig(request.aspectRatio, request.imageSize || inferGeminiImageSize(explicitPixelSize));
+    if (mappedSize) return mappedSize;
+  }
+  return explicitPixelSize;
+}
+
 export function resolveImageTarget(
   apiModel: string,
   resolutions: ResolutionMap | undefined,
@@ -476,6 +540,7 @@ async function generateWithOpenAI(
   const key = getNextApiKey(apiKey, channelId);
   const url = `${baseUrl.replace(/\/$/, '')}/v1/images/generations`;
   const isGeminiModel = isGeminiCompatibleImageModel(target.model);
+  const compatibleGeminiSize = isGeminiModel ? resolveGeminiCompatibleSize(request, target.size) : undefined;
 
   const payload: Record<string, unknown> = {
     model: target.model,
@@ -485,7 +550,9 @@ async function generateWithOpenAI(
   };
 
   // 添加尺寸参数：管理员配置的分辨率映射 > 显式 size > 硬编码兜底
-  if (target.size) {
+  if (compatibleGeminiSize) {
+    payload.size = compatibleGeminiSize;
+  } else if (target.size) {
     payload.size = target.size;
   } else if (request.size && !isGeminiModel) {
     payload.size = request.size;
