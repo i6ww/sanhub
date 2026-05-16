@@ -205,6 +205,141 @@ function pickImageUrl(value: unknown, depth = 0): string | undefined {
   return undefined;
 }
 
+function normalizeImageDataUrl(data: unknown, mimeType: unknown): string | undefined {
+  if (typeof data !== 'string') return undefined;
+  const trimmed = data.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.startsWith('data:image/')) return trimmed;
+
+  const mime = typeof mimeType === 'string' && mimeType.trim()
+    ? mimeType.trim()
+    : 'image/png';
+  return `data:${mime};base64,${trimmed.replace(/^data:[^;]+;base64,/, '')}`;
+}
+
+function pickImageDataUrl(value: unknown, depth = 0): string | undefined {
+  if (!value || typeof value !== 'object' || depth > 6) return undefined;
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const nested = pickImageDataUrl(item, depth + 1);
+      if (nested) return nested;
+    }
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  const inlineData = record.inlineData || record.inline_data;
+  if (inlineData && typeof inlineData === 'object') {
+    const inline = inlineData as Record<string, unknown>;
+    const dataUrl = normalizeImageDataUrl(
+      inline.data,
+      inline.mimeType || inline.mime_type || inline.type
+    );
+    if (dataUrl) return dataUrl;
+  }
+
+  const recordMime = record.mimeType || record.mime_type || record.type;
+  if (typeof record.b64_json === 'string') {
+    const dataUrl = normalizeImageDataUrl(record.b64_json, recordMime);
+    if (dataUrl) return dataUrl;
+  }
+
+  if (recordMime && typeof record.data === 'string') {
+    const dataUrl = normalizeImageDataUrl(record.data, recordMime);
+    if (dataUrl) return dataUrl;
+  }
+
+  const priorityNestedKeys = [
+    'data',
+    'candidates',
+    'choices',
+    'parts',
+    'content',
+    'message',
+    'output',
+    'outputs',
+    'result',
+    'results',
+    'image',
+    'images',
+  ];
+
+  for (const key of priorityNestedKeys) {
+    const nested = pickImageDataUrl(record[key], depth + 1);
+    if (nested) return nested;
+  }
+
+  for (const candidate of Object.values(record)) {
+    const nested = pickImageDataUrl(candidate, depth + 1);
+    if (nested) return nested;
+  }
+
+  return undefined;
+}
+
+function pickGeneratedImage(data: unknown, preferred?: unknown): string | undefined {
+  return (
+    pickImageUrl(preferred) ||
+    pickImageUrl(data) ||
+    pickImageDataUrl(preferred) ||
+    pickImageDataUrl(data)
+  );
+}
+
+function summarizeImageResponse(value: unknown): string {
+  const seen = new WeakSet<object>();
+  const summarize = (item: unknown, depth = 0): unknown => {
+    if (depth > 3) return Array.isArray(item) ? '[array]' : typeof item;
+    if (typeof item === 'string') {
+      if (item.startsWith('data:image/')) return `data-url(${item.length})`;
+      return item.length > 120 ? `string(${item.length})` : item;
+    }
+    if (!item || typeof item !== 'object') return item;
+    if (seen.has(item)) return '[circular]';
+    seen.add(item);
+    if (Array.isArray(item)) {
+      return item.length > 0 ? [summarize(item[0], depth + 1)] : [];
+    }
+    const output: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(item as Record<string, unknown>)) {
+      output[key] = key === 'data' || key === 'b64_json'
+        ? (typeof val === 'string' ? `string(${val.length})` : summarize(val, depth + 1))
+        : summarize(val, depth + 1);
+    }
+    return output;
+  };
+
+  try {
+    return JSON.stringify(summarize(value));
+  } catch {
+    return String(value);
+  }
+}
+
+function upstreamErrorMessage(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const record = data as Record<string, unknown>;
+  const error = record.error;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const err = error as Record<string, unknown>;
+    if (typeof err.message === 'string') return err.message;
+    if (typeof err.detail === 'string') return err.detail;
+  }
+  if (typeof record.message === 'string' && !pickGeneratedImage(data)) return record.message;
+  if (typeof record.detail === 'string' && !pickGeneratedImage(data)) return record.detail;
+  return undefined;
+}
+
+function throwMissingImage(data: unknown): never {
+  const upstreamError = upstreamErrorMessage(data);
+  if (upstreamError) {
+    throw new Error(`API 返回错误: ${upstreamError}`);
+  }
+  throw new Error(`API 返回成功但未包含图片，响应结构: ${summarizeImageResponse(data)}`);
+}
+
 function buildOpenAIImageInput(
   images: ImageGenerateRequest['images']
 ): string | string[] | undefined {
@@ -340,13 +475,8 @@ async function generateWithOpenAI(
   const data: any = await response.json();
   const imageData = data.data?.[0];
 
-  const remoteImageUrl = pickImageUrl(imageData);
-
-  if (!imageData?.b64_json && !remoteImageUrl) {
-    throw new Error('API 返回成功但未包含图片');
-  }
-
-  const resultUrl = remoteImageUrl || `data:image/png;base64,${imageData.b64_json}`;
+  const resultUrl = pickGeneratedImage(data, imageData);
+  if (!resultUrl) throwMissingImage(data);
 
   return {
     type: 'gemini-image', // 统一类型
@@ -389,6 +519,7 @@ async function generateWithGemini(
   }
 
   const generationConfig: Record<string, unknown> = {
+    responseModalities: ['TEXT', 'IMAGE'],
     imageConfig: {
       aspectRatio: request.aspectRatio || '1:1',
     },
@@ -413,7 +544,7 @@ async function generateWithGemini(
         : {}),
     },
     body: JSON.stringify({
-      contents: [{ parts }],
+      contents: [{ role: 'user', parts }],
       generationConfig,
     }),
     dispatcher: imageAgent,
@@ -426,7 +557,7 @@ async function generateWithGemini(
 
   const data: any = await response.json();
   const generatedImages: string[] = [];
-  const responseImageUrl = pickImageUrl(data);
+  const responseImageUrl = pickGeneratedImage(data);
 
   if (responseImageUrl) {
     generatedImages.push(responseImageUrl);
@@ -453,7 +584,7 @@ async function generateWithGemini(
     if (textPart?.text) {
       throw new Error(`生成失败: ${textPart.text}`);
     }
-    throw new Error('API 返回成功但未包含图片');
+    throwMissingImage(data);
   }
 
   return {
