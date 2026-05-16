@@ -8,6 +8,12 @@ import { getImageModelWithChannel } from './db';
 import { uploadToPicUI } from './picui';
 import { fetchWithRetry } from './http-retry';
 import { isTransientError } from './polling-utils';
+import {
+  inferImageSizeLabel,
+  normalizeAspectRatio,
+  normalizePixelSize,
+  resolveGeminiCompatibleImageSize,
+} from './image-sizing';
 import type { GenerateResult } from '@/types';
 
 export interface ImageGenerateRequest {
@@ -69,11 +75,9 @@ export type ResolvedImageTarget = {
   usedModelFromMapping: boolean;
 };
 
-const PIXEL_SIZE_PATTERN = /^\d+[x×]\d+$/i;
-const ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
 
 const isSizeValue = (value: string): boolean =>
-  PIXEL_SIZE_PATTERN.test(value) || ASPECT_RATIO_PATTERN.test(value);
+  Boolean(normalizePixelSize(value) || normalizeAspectRatio(value));
 
 const GENERATION_POST_RETRY_OPTIONS = { attempts: 1 };
 const IMAGE_REQUEST_TIMEOUT_MS = 5 * 60 * 1000;
@@ -409,80 +413,10 @@ function normalizeGeminiNativeModel(apiModel: string, baseUrl: string): string {
 }
 
 function inferGeminiImageSize(size?: string): string | undefined {
-  if (!size) return undefined;
-  const normalized = size.trim().replace(/×/g, 'x');
-  if (/^(512|1K|2K|4K)$/i.test(normalized)) return normalized.toUpperCase();
-  const match = normalized.match(/^(\d+)x(\d+)$/i);
-  if (!match) return undefined;
-  const maxSide = Math.max(Number(match[1]), Number(match[2]));
-  if (maxSide >= 3000) return '4K';
-  if (maxSide >= 1500) return '2K';
-  if (maxSide <= 768) return '512';
-  return '1K';
+  return inferImageSizeLabel(size);
 }
-
-function normalizedPixelSize(size?: string): string | undefined {
-  if (!size) return undefined;
-  const normalized = size.trim().replace(/×/g, 'x');
-  return PIXEL_SIZE_PATTERN.test(normalized) ? normalized : undefined;
-}
-
-function aspectRatioOfSize(size?: string): string | undefined {
-  const normalized = normalizedPixelSize(size);
-  if (!normalized) return undefined;
-  const [width, height] = normalized.split('x').map(Number);
-  if (!width || !height) return undefined;
-  const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
-  const divisor = gcd(width, height);
-  return `${width / divisor}:${height / divisor}`;
-}
-
-function compatibleGeminiSizeForConfig(aspectRatio?: string, imageSize?: string): string | undefined {
-  if (!aspectRatio) return undefined;
-  const normalizedImageSize = (imageSize || '2K').toUpperCase();
-  const sizeMap: Record<string, Record<string, string>> = {
-    '512': {
-      '1:1': '512x512',
-    },
-    '1K': {
-      '1:1': '1024x1024',
-      '4:3': '1024x768',
-      '3:4': '768x1024',
-    },
-    '2K': {
-      '1:1': '2048x2048',
-      '16:9': '2048x1152',
-      '9:16': '1152x2048',
-      '4:3': '2048x1536',
-      '3:4': '1536x2048',
-      '3:2': '1536x1024',
-      '2:3': '1024x1536',
-    },
-    '4K': {
-      '1:1': '4096x4096',
-      '16:9': '3840x2160',
-      '9:16': '2160x3840',
-      '4:3': '4096x3072',
-      '3:4': '3072x4096',
-      '3:2': '5056x3392',
-      '2:3': '3392x5056',
-    },
-  };
-  return sizeMap[normalizedImageSize]?.[aspectRatio] || sizeMap['2K'][aspectRatio];
-}
-
 function resolveGeminiCompatibleSize(request: ImageGenerateRequest, targetSize?: string): string | undefined {
-  if (targetSize) return targetSize.replace(/×/g, 'x');
-  const explicitPixelSize = normalizedPixelSize(request.size);
-  if (request.aspectRatio) {
-    const explicitSizeRatio = aspectRatioOfSize(explicitPixelSize);
-    if (explicitPixelSize && explicitSizeRatio === request.aspectRatio) {
-      return explicitPixelSize;
-    }
-    const mappedSize = compatibleGeminiSizeForConfig(request.aspectRatio, request.imageSize || inferGeminiImageSize(explicitPixelSize));
-    if (mappedSize) return mappedSize;
-  }
-  return explicitPixelSize;
+  return resolveGeminiCompatibleImageSize(request, targetSize);
 }
 
 export function resolveImageTarget(
@@ -540,7 +474,12 @@ async function generateWithOpenAI(
   const key = getNextApiKey(apiKey, channelId);
   const url = `${baseUrl.replace(/\/$/, '')}/v1/images/generations`;
   const isGeminiModel = isGeminiCompatibleImageModel(target.model);
-  const compatibleGeminiSize = isGeminiModel ? resolveGeminiCompatibleSize(request, target.size) : undefined;
+  const normalizedRequest: ImageGenerateRequest = {
+    ...request,
+    size: normalizePixelSize(request.size) || request.size,
+    aspectRatio: normalizeAspectRatio(request.aspectRatio) || normalizeAspectRatio(request.size) || request.aspectRatio,
+  };
+  const compatibleGeminiSize = isGeminiModel ? resolveGeminiCompatibleSize(normalizedRequest, target.size) : undefined;
 
   const payload: Record<string, unknown> = {
     model: target.model,
@@ -554,9 +493,9 @@ async function generateWithOpenAI(
     payload.size = compatibleGeminiSize;
   } else if (target.size) {
     payload.size = target.size;
-  } else if (request.size && !isGeminiModel) {
-    payload.size = request.size;
-  } else if (request.aspectRatio && !isGeminiModel) {
+  } else if (request.size && !isGeminiModel && !normalizeAspectRatio(request.size)) {
+    payload.size = normalizePixelSize(request.size) || request.size;
+  } else if (normalizedRequest.aspectRatio && !isGeminiModel) {
     const sizeMap: Record<string, string> = {
       '1:1': '1024x1024',
       '16:9': '1792x1024',
@@ -564,7 +503,7 @@ async function generateWithOpenAI(
       '3:2': '1536x1024',
       '2:3': '1024x1536',
     };
-    payload.size = sizeMap[request.aspectRatio] || '1024x1024';
+    payload.size = sizeMap[normalizedRequest.aspectRatio] || '1024x1024';
   }
 
   // 统一乘号（管理员可能填了 Unicode ×）
@@ -577,18 +516,18 @@ async function generateWithOpenAI(
   }
 
   const googleConfig: Record<string, string> = {};
-  if (request.aspectRatio) {
-    googleConfig.aspect_ratio = request.aspectRatio;
+  if (normalizedRequest.aspectRatio) {
+    googleConfig.aspect_ratio = normalizedRequest.aspectRatio;
   }
-  const compatibleImageSize = request.imageSize || (isGeminiModel ? inferGeminiImageSize(request.size) : undefined);
+  const compatibleImageSize = request.imageSize || (isGeminiModel ? inferGeminiImageSize(normalizedRequest.size) : undefined);
   if (compatibleImageSize) {
     googleConfig.image_size = compatibleImageSize;
   }
   if (typeof payload.size === 'string') {
     googleConfig.size = payload.size;
   }
-  if (isGeminiModel && request.size && !compatibleImageSize && !ASPECT_RATIO_PATTERN.test(request.size)) {
-    googleConfig.size = request.size.replace(/×/g, 'x');
+  if (isGeminiModel && normalizedRequest.size && !compatibleImageSize && !normalizeAspectRatio(normalizedRequest.size)) {
+    googleConfig.size = normalizePixelSize(normalizedRequest.size) || normalizedRequest.size.replace(/×/g, 'x');
   }
   if (Object.keys(googleConfig).length > 0) {
     payload.extra_body = { google: { image_config: googleConfig } };
@@ -666,7 +605,7 @@ async function generateWithGemini(
     }
   }
 
-  const aspectRatio = request.aspectRatio || '1:1';
+  const aspectRatio = normalizeAspectRatio(request.aspectRatio) || normalizeAspectRatio(request.size) || '1:1';
   const imageConfig: Record<string, unknown> = { aspectRatio };
   const responseImageConfig: Record<string, unknown> = { aspectRatio };
   const generationConfig: Record<string, unknown> = {
@@ -1111,7 +1050,8 @@ async function generateWithOpenAIChat(
   }
 
   const imageConfig: Record<string, string> = {};
-  if (request.aspectRatio) imageConfig.aspect_ratio = request.aspectRatio;
+  const normalizedAspectRatio = normalizeAspectRatio(request.aspectRatio) || normalizeAspectRatio(request.size);
+  if (normalizedAspectRatio) imageConfig.aspect_ratio = normalizedAspectRatio;
   if (request.imageSize) imageConfig.image_size = request.imageSize;
   if (request.size) imageConfig.size = request.size.replace(/×/g, 'x');
 

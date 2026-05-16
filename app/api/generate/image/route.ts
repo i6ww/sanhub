@@ -18,6 +18,7 @@ import { checkRateLimit } from '@/lib/rate-limit';
 import { fetchReferenceImage } from '@/lib/reference-image';
 import { assertPromptsAllowed, isPromptBlockedError } from '@/lib/prompt-blocklist';
 import { resolveImageSize } from '@/lib/v1-images';
+import { inferImageSizeLabel as inferNormalizedImageSizeLabel, normalizeAspectRatio } from '@/lib/image-sizing';
 import type { ChannelType, Generation, GenerationType } from '@/types';
 
 export const maxDuration = 600;
@@ -37,20 +38,6 @@ const IMAGE_TYPE_BY_CHANNEL: Record<ChannelType, GenerationType> = {
   flow2api: 'gemini-image',
   grok2api: 'gemini-image',
 };
-
-function inferImageSizeLabel(size?: string): string | undefined {
-  if (!size) return undefined;
-  const normalized = size.trim().replace(/×/g, 'x');
-  if (/^(512|1K|2K|4K)$/i.test(normalized)) return normalized.toUpperCase();
-  const match = normalized.match(/^(\d+)x(\d+)$/i);
-  if (!match) return undefined;
-  const maxSide = Math.max(Number(match[1]), Number(match[2]));
-  if (maxSide >= 3000) return '4K';
-  if (maxSide >= 1500) return '2K';
-  if (maxSide <= 768) return '512';
-  return '1K';
-}
-
 class RouteResponseError extends Error {
   constructor(public response: NextResponse) {
     super('Route response');
@@ -193,12 +180,12 @@ export async function POST(request: NextRequest) {
     const images = payload.images;
     const referenceImages = payload.referenceImages || payload.reference_images;
     const referenceImageUrl = firstString(payload.referenceImageUrl, payload.reference_image_url);
-    const aspectRatio = firstString(
+    const aspectRatio = normalizeAspectRatio(firstString(
       payload.aspectRatio,
       payload.aspect_ratio,
       googleImageConfig.aspectRatio,
       googleImageConfig.aspect_ratio
-    );
+    ));
     const imageSize = firstString(
       payload.imageSize,
       payload.image_size,
@@ -208,7 +195,7 @@ export async function POST(request: NextRequest) {
     const clientRequestId = firstString(payload.clientRequestId, payload.client_request_id) || '';
     const resolvedInputSize = resolveImageSize(size);
     const effectiveAspectRatio = aspectRatio || resolvedInputSize.aspectRatio;
-    const effectiveImageSize = imageSize || inferImageSizeLabel(size);
+    const effectiveImageSize = inferNormalizedImageSizeLabel(imageSize) || imageSize || inferNormalizedImageSizeLabel(size);
     const effectiveSize = resolvedInputSize.size || size;
 
     if (clientRequestId && !CLIENT_REQUEST_ID_PATTERN.test(clientRequestId)) {

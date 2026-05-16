@@ -1,14 +1,13 @@
 import { getImageChannels, getImageModels } from '@/lib/db';
 import { fetchExternalBuffer } from '@/lib/safe-fetch';
 import { buildDataUrl, parseDataUrl } from '@/lib/v1';
+import { normalizeAspectRatio, resolveImageSize as resolveImageSizeInput } from '@/lib/image-sizing';
 import type { ImageGenerateRequest } from '@/lib/image-generator';
 import type { NextRequest } from 'next/server';
 
 export const MAX_V1_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 export const MAX_V1_IMAGE_COUNT = 10;
 
-const ASPECT_RATIO_PATTERN = /^\d+:\d+$/;
-const PIXEL_SIZE_PATTERN = /^\d+[x×]\d+$/i;
 
 type ImageLikeObject = {
   url?: unknown;
@@ -196,12 +195,12 @@ export async function parseOpenAIImageRequest(request: NextRequest): Promise<Par
       size: firstString(form.get('size'), googleConfig.size),
       responseFormat: String(form.get('response_format') || '').trim() || undefined,
       imageReferences: await readFormImageReferences(form),
-      aspectRatio: firstString(
+      aspectRatio: normalizeAspectRatio(firstString(
         form.get('aspect_ratio'),
         form.get('aspectRatio'),
         googleConfig.aspect_ratio,
         googleConfig.aspectRatio
-      ),
+      )),
       imageSize: firstString(
         form.get('image_size'),
         form.get('imageSize'),
@@ -220,7 +219,7 @@ export async function parseOpenAIImageRequest(request: NextRequest): Promise<Par
 
   // 提取 extra_body.google.image_config（Gemini/Banana 原生参数透传）
   const imageConfig = googleImageConfigFromExtraBody(payload.extra_body);
-  const aspectRatio = firstString(payload.aspect_ratio, payload.aspectRatio, imageConfig.aspect_ratio, imageConfig.aspectRatio);
+  const aspectRatio = normalizeAspectRatio(firstString(payload.aspect_ratio, payload.aspectRatio, imageConfig.aspect_ratio, imageConfig.aspectRatio));
   const imageSize = firstString(payload.image_size, payload.imageSize, imageConfig.image_size, imageConfig.imageSize);
   const configSize = firstString(imageConfig.size);
 
@@ -237,26 +236,7 @@ export async function parseOpenAIImageRequest(request: NextRequest): Promise<Par
 }
 
 export function resolveImageSize(size: unknown): Pick<ImageGenerateRequest, 'size' | 'aspectRatio' | 'imageSize'> {
-  if (typeof size !== 'string') return {};
-  const normalized = size.trim();
-  if (!normalized) return {};
-
-  if (ASPECT_RATIO_PATTERN.test(normalized)) {
-    return { aspectRatio: normalized };
-  }
-
-  if (PIXEL_SIZE_PATTERN.test(normalized)) {
-    const normalizedSize = normalized.replace(/×/g, 'x');
-    const [w, h] = normalizedSize.split('x').map(Number);
-    if (w && h) {
-      const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
-      const divisor = gcd(w, h);
-      return { size: normalizedSize, aspectRatio: `${w / divisor}:${h / divisor}` };
-    }
-    return {};
-  }
-
-  return { size: normalized.replace(/×/g, 'x') };
+  return resolveImageSizeInput(size);
 }
 
 export async function resolveImageModelId(model?: string): Promise<string | null> {

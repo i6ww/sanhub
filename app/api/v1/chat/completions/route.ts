@@ -18,6 +18,7 @@ import {
   resolveImageModelId,
   resolveImageSize,
 } from '@/lib/v1-images';
+import { normalizeAspectRatio } from '@/lib/image-sizing';
 import { processVideoPrompt } from '@/lib/prompt-processor';
 import { assertPromptsAllowed } from '@/lib/prompt-blocklist';
 
@@ -661,8 +662,8 @@ export async function POST(request: NextRequest) {
   let aspectRatioFromConfig: string | undefined;
   let imageSizeFromConfig: string | undefined;
   let sizeFromConfig: string | undefined;
-  aspectRatioFromConfig = (typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio.trim() : undefined)
-    || (typeof payload.aspectRatio === 'string' ? payload.aspectRatio.trim() : undefined);
+  aspectRatioFromConfig = normalizeAspectRatio(typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio : undefined)
+    || normalizeAspectRatio(typeof payload.aspectRatio === 'string' ? payload.aspectRatio : undefined);
   imageSizeFromConfig = (typeof payload.image_size === 'string' ? payload.image_size.trim() : undefined)
     || (typeof payload.imageSize === 'string' ? payload.imageSize.trim() : undefined);
   const extraBody = (payload as Record<string, unknown>).extra_body as Record<string, unknown> | undefined;
@@ -670,8 +671,8 @@ export async function POST(request: NextRequest) {
   const imageCfg = googleCfg?.image_config as Record<string, unknown> | undefined;
   if (imageCfg) {
     aspectRatioFromConfig = aspectRatioFromConfig
-      || (typeof imageCfg.aspect_ratio === 'string' ? imageCfg.aspect_ratio.trim() : undefined)
-      || (typeof imageCfg.aspectRatio === 'string' ? imageCfg.aspectRatio.trim() : undefined);
+      || normalizeAspectRatio(typeof imageCfg.aspect_ratio === 'string' ? imageCfg.aspect_ratio : undefined)
+      || normalizeAspectRatio(typeof imageCfg.aspectRatio === 'string' ? imageCfg.aspectRatio : undefined);
     imageSizeFromConfig = imageSizeFromConfig
       || (typeof imageCfg.image_size === 'string' ? imageCfg.image_size.trim() : undefined)
       || (typeof imageCfg.imageSize === 'string' ? imageCfg.imageSize.trim() : undefined);
