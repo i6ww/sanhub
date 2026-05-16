@@ -28,6 +28,35 @@ export type ParsedOpenAIImageRequest = {
   quality?: string;
 };
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> | undefined {
+  if (!value) return undefined;
+  if (typeof value === 'object') return value as Record<string, unknown>;
+  if (typeof value !== 'string') return undefined;
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function googleImageConfigFromExtraBody(extraBody: unknown): Record<string, unknown> {
+  const extra = parseJsonObject(extraBody);
+  const google = parseJsonObject(extra?.google);
+  const imageConfig = parseJsonObject(google?.image_config);
+  return imageConfig || {};
+}
+
 export function normalizeImageReferences(input: unknown): string[] {
   if (input === undefined || input === null) return [];
 
@@ -160,12 +189,26 @@ export async function parseOpenAIImageRequest(request: NextRequest): Promise<Par
 
   if (contentType.includes('multipart/form-data')) {
     const form = await request.formData();
+    const googleConfig = googleImageConfigFromExtraBody(form.get('extra_body'));
     return {
       model: String(form.get('model') || '').trim() || undefined,
       prompt: String(form.get('prompt') || '').trim(),
-      size: String(form.get('size') || '').trim() || undefined,
+      size: firstString(form.get('size'), googleConfig.size),
       responseFormat: String(form.get('response_format') || '').trim() || undefined,
       imageReferences: await readFormImageReferences(form),
+      aspectRatio: firstString(
+        form.get('aspect_ratio'),
+        form.get('aspectRatio'),
+        googleConfig.aspect_ratio,
+        googleConfig.aspectRatio
+      ),
+      imageSize: firstString(
+        form.get('image_size'),
+        form.get('imageSize'),
+        googleConfig.image_size,
+        googleConfig.imageSize
+      ),
+      quality: firstString(form.get('quality')),
     };
   }
 
@@ -173,34 +216,19 @@ export async function parseOpenAIImageRequest(request: NextRequest): Promise<Par
   const payload = body && typeof body === 'object' ? body as Record<string, unknown> : {};
 
   // 提取 standard OpenAI 参数
-  const quality = typeof payload.quality === 'string' ? payload.quality.trim() : undefined;
+  const quality = firstString(payload.quality);
 
   // 提取 extra_body.google.image_config（Gemini/Banana 原生参数透传）
-  let aspectRatio: string | undefined;
-  let imageSize: string | undefined;
-  let configSize: string | undefined;
-  aspectRatio = (typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio.trim() : undefined)
-    || (typeof payload.aspectRatio === 'string' ? payload.aspectRatio.trim() : undefined);
-  imageSize = (typeof payload.image_size === 'string' ? payload.image_size.trim() : undefined)
-    || (typeof payload.imageSize === 'string' ? payload.imageSize.trim() : undefined);
-  const extraBody = payload.extra_body as Record<string, unknown> | undefined;
-  const googleConfig = extraBody?.google as Record<string, unknown> | undefined;
-  const imageConfig = googleConfig?.image_config as Record<string, unknown> | undefined;
-  if (imageConfig) {
-    aspectRatio = aspectRatio
-      || (typeof imageConfig.aspect_ratio === 'string' ? imageConfig.aspect_ratio.trim() : undefined)
-      || (typeof imageConfig.aspectRatio === 'string' ? imageConfig.aspectRatio.trim() : undefined);
-    imageSize = imageSize
-      || (typeof imageConfig.image_size === 'string' ? imageConfig.image_size.trim() : undefined)
-      || (typeof imageConfig.imageSize === 'string' ? imageConfig.imageSize.trim() : undefined);
-    configSize = typeof imageConfig.size === 'string' ? imageConfig.size.trim() : undefined;
-  }
+  const imageConfig = googleImageConfigFromExtraBody(payload.extra_body);
+  const aspectRatio = firstString(payload.aspect_ratio, payload.aspectRatio, imageConfig.aspect_ratio, imageConfig.aspectRatio);
+  const imageSize = firstString(payload.image_size, payload.imageSize, imageConfig.image_size, imageConfig.imageSize);
+  const configSize = firstString(imageConfig.size);
 
   return {
-    model: typeof payload.model === 'string' ? payload.model.trim() : undefined,
-    prompt: typeof payload.prompt === 'string' ? payload.prompt.trim() : '',
-    size: (typeof payload.size === 'string' ? payload.size.trim() : undefined) || configSize,
-    responseFormat: typeof payload.response_format === 'string' ? payload.response_format.trim() : undefined,
+    model: firstString(payload.model),
+    prompt: firstString(payload.prompt) || '',
+    size: firstString(payload.size) || configSize,
+    responseFormat: firstString(payload.response_format),
     imageReferences: collectPayloadImageReferences(payload),
     aspectRatio,
     imageSize,

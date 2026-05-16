@@ -332,12 +332,29 @@ function upstreamErrorMessage(data: unknown): string | undefined {
   return undefined;
 }
 
+function missingImageDiagnostic(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const record = data as Record<string, unknown>;
+  const candidates = record.candidates;
+  if (!Array.isArray(candidates) || candidates.length === 0) return undefined;
+  const first = candidates[0] as Record<string, unknown>;
+  const content = first.content as Record<string, unknown> | undefined;
+  const parts = content?.parts;
+  const usage = record.usageMetadata as Record<string, unknown> | undefined;
+  const candidateTokens = Number(usage?.candidatesTokenCount ?? usage?.candidatesTokensCount ?? NaN);
+  if (Array.isArray(parts) && parts.length === 0 && first.finishReason === 'STOP' && candidateTokens === 0) {
+    return 'Gemini 已接收 prompt 但没有生成候选内容，通常是模型名不是当前图像生成模型，或 generationConfig 没有触发 image 输出';
+  }
+  return undefined;
+}
+
 function throwMissingImage(data: unknown): never {
   const upstreamError = upstreamErrorMessage(data);
   if (upstreamError) {
     throw new Error(`API 返回错误: ${upstreamError}`);
   }
-  throw new Error(`API 返回成功但未包含图片，响应结构: ${summarizeImageResponse(data)}`);
+  const diagnostic = missingImageDiagnostic(data);
+  throw new Error(`API 返回成功但未包含图片${diagnostic ? `（${diagnostic}）` : ''}，响应结构: ${summarizeImageResponse(data)}`);
 }
 
 function buildOpenAIImageInput(
@@ -349,6 +366,50 @@ function buildOpenAIImageInput(
 
   if (refs.length === 0) return undefined;
   return refs.length === 1 ? refs[0] : refs;
+}
+
+function normalizeGeminiNativeModel(apiModel: string, baseUrl: string): string {
+  const model = apiModel.trim();
+  const lower = model.toLowerCase();
+  const isGoogleNative = baseUrl.toLowerCase().includes('generativelanguage.googleapis.com');
+
+  if (!isGoogleNative) {
+    if (/^gemini-3\.0-pro-image-(square|landscape|portrait|four-three|three-four)(-2k|-4k)?$/.test(lower)) {
+      return 'gemini_3.0_pro_image_preview';
+    }
+    return model;
+  }
+
+  if (/^gemini-3\.0-pro-image-(square|landscape|portrait|four-three|three-four)(-2k|-4k)?$/.test(lower)) {
+    return 'gemini-3-pro-image-preview';
+  }
+
+  const aliases: Record<string, string> = {
+    'gemini_3_pro_image_preview': 'gemini-3-pro-image-preview',
+    'gemini_3.0_pro_image_preview': 'gemini-3-pro-image-preview',
+    'gemini-3.0-pro-image-preview': 'gemini-3-pro-image-preview',
+    'nano-banana-pro': 'gemini-3-pro-image-preview',
+    'banana-pro': 'gemini-3-pro-image-preview',
+    'gemini_3.1_flash_image_preview': 'gemini-3.1-flash-image-preview',
+    'nano-banana-2': 'gemini-3.1-flash-image-preview',
+    'banana2': 'gemini-3.1-flash-image-preview',
+    'banana-2': 'gemini-3.1-flash-image-preview',
+  };
+
+  return aliases[lower] || model;
+}
+
+function inferGeminiImageSize(size?: string): string | undefined {
+  if (!size) return undefined;
+  const normalized = size.trim().replace(/×/g, 'x');
+  if (/^(512|1K|2K|4K)$/i.test(normalized)) return normalized.toUpperCase();
+  const match = normalized.match(/^(\d+)x(\d+)$/i);
+  if (!match) return undefined;
+  const maxSide = Math.max(Number(match[1]), Number(match[2]));
+  if (maxSide >= 3000) return '4K';
+  if (maxSide >= 1500) return '2K';
+  if (maxSide <= 768) return '512';
+  return '1K';
 }
 
 export function resolveImageTarget(
@@ -497,41 +558,42 @@ async function generateWithGemini(
   channelId: string
 ): Promise<GenerateResult> {
   const key = getNextApiKey(apiKey, channelId);
-  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${apiModel}:generateContent?key=${key}`;
+  const normalizedModel = normalizeGeminiNativeModel(apiModel, baseUrl);
+  const url = `${baseUrl.replace(/\/$/, '')}/v1beta/models/${normalizedModel}:generateContent?key=${key}`;
 
-  const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+  const parts: Array<{ text?: string; inline_data?: { mime_type: string; data: string } }> = [];
 
-  // 添加参考图
+  // 官方 REST 示例使用 prompt 在前，参考图在后。
+  if (request.prompt) {
+    parts.push({ text: request.prompt });
+  }
+
   if (request.images && request.images.length > 0) {
     for (const img of request.images) {
       parts.push({
-        inlineData: {
-          mimeType: img.mimeType || 'image/jpeg',
+        inline_data: {
+          mime_type: img.mimeType || 'image/jpeg',
           data: img.data.replace(/^data:[^;]+;base64,/, ''),
         },
       });
     }
   }
 
-  // 添加提示词
-  if (request.prompt) {
-    parts.push({ text: request.prompt });
-  }
-
   const aspectRatio = request.aspectRatio || '1:1';
   const imageConfig: Record<string, unknown> = { aspectRatio };
   const responseImageConfig: Record<string, unknown> = { aspectRatio };
   const generationConfig: Record<string, unknown> = {
-    responseModalities: ['Image'],
+    responseModalities: ['TEXT', 'IMAGE'],
     imageConfig,
     responseFormat: {
       image: responseImageConfig,
     },
   };
 
-  if (request.imageSize) {
-    imageConfig.imageSize = request.imageSize;
-    responseImageConfig.imageSize = request.imageSize;
+  const imageSize = request.imageSize || inferGeminiImageSize(request.size);
+  if (imageSize) {
+    imageConfig.imageSize = imageSize;
+    responseImageConfig.imageSize = imageSize;
   }
   if (request.size) {
     const normalizedSize = request.size.replace(/×/g, 'x');
@@ -552,7 +614,7 @@ async function generateWithGemini(
         : {}),
     },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts }],
+      contents: [{ parts }],
       generationConfig,
     }),
     dispatcher: imageAgent,

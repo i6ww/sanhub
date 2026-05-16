@@ -129,7 +129,8 @@ function parseModelVariant(modelId: string): ParsedModelVariant | null {
 
 function formatDisplayName(baseName: string): string {
   const lower = baseName.toLowerCase();
-  if (lower.includes('gemini-3.0-pro-image')) return 'Gemini 3 Pro';
+  if (lower.includes('gemini-3-pro-image') || lower.includes('gemini-3.0-pro-image')) return 'Gemini 3 Pro';
+  if (lower.includes('gemini-3.1-flash-image')) return 'Gemini 3.1 Flash';
   if (lower.includes('gemini-2.5-flash-image')) return 'Gemini 2.5 Flash';
   if (lower.includes('imagen-4.0-generate-preview')) return 'Imagen 4 Preview';
 

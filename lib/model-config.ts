@@ -71,7 +71,7 @@ export const IMAGE_MODELS: ImageModelConfig[] = [
     name: 'Gemini Nano',
     description: '极速生成',
     provider: 'gemini',
-    apiModel: 'gemini-2.5-flash-image',
+    apiModel: 'gemini-3.1-flash-image-preview',
     features: {
       supportReferenceImage: true,
       supportImageSize: false,

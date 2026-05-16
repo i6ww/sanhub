@@ -59,6 +59,33 @@ function throwRouteResponse(response: NextResponse): never {
   throw new RouteResponseError(response);
 }
 
+function firstString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return undefined;
+}
+
+function getGoogleImageConfig(body: Record<string, unknown>): Record<string, unknown> {
+  const extraBody = body.extra_body;
+  if (!extraBody || typeof extraBody !== 'object') return {};
+  const google = (extraBody as Record<string, unknown>).google;
+  if (!google || typeof google !== 'object') return {};
+  const imageConfig = (google as Record<string, unknown>).image_config;
+  return imageConfig && typeof imageConfig === 'object'
+    ? imageConfig as Record<string, unknown>
+    : {};
+}
+
+function isInlineImageInput(value: unknown): value is { mimeType: string; data: string } {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return typeof record.data === 'string' && typeof record.mimeType === 'string';
+}
+
 // 后台处理任务
 async function processGenerationTask(
   generationId: string,
@@ -143,20 +170,28 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const {
-      modelId,
-      prompt,
-      size,
-      aspectRatio,
-      imageSize,
-      quality,
-      images,
-      referenceImages,
-      referenceImageUrl,
-      clientRequestId: rawClientRequestId,
-    } = body;
-    const clientRequestId =
-      typeof rawClientRequestId === 'string' ? rawClientRequestId.trim() : '';
+    const payload = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const googleImageConfig = getGoogleImageConfig(payload);
+    const modelId = firstString(payload.modelId, payload.model_id);
+    const prompt = firstString(payload.prompt) || '';
+    const size = firstString(payload.size, googleImageConfig.size);
+    const quality = firstString(payload.quality, googleImageConfig.quality);
+    const images = payload.images;
+    const referenceImages = payload.referenceImages || payload.reference_images;
+    const referenceImageUrl = firstString(payload.referenceImageUrl, payload.reference_image_url);
+    const aspectRatio = firstString(
+      payload.aspectRatio,
+      payload.aspect_ratio,
+      googleImageConfig.aspectRatio,
+      googleImageConfig.aspect_ratio
+    );
+    const imageSize = firstString(
+      payload.imageSize,
+      payload.image_size,
+      googleImageConfig.imageSize,
+      googleImageConfig.image_size
+    );
+    const clientRequestId = firstString(payload.clientRequestId, payload.client_request_id) || '';
 
     if (clientRequestId && !CLIENT_REQUEST_ID_PATTERN.test(clientRequestId)) {
       return NextResponse.json({ error: 'Invalid client request id' }, { status: 400 });
@@ -245,8 +280,8 @@ export async function POST(request: NextRequest) {
       const origin = new URL(request.url).origin;
       const imageList: Array<{ mimeType: string; data: string }> = [];
 
-      if (images && Array.isArray(images)) {
-        imageList.push(...images);
+      if (Array.isArray(images)) {
+        imageList.push(...images.filter(isInlineImageInput));
       }
 
       if (referenceImageUrl) {
@@ -265,8 +300,9 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      if (referenceImages && Array.isArray(referenceImages)) {
+      if (Array.isArray(referenceImages)) {
         for (const img of referenceImages) {
+          if (typeof img !== 'string') continue;
           if (img.startsWith('data:')) {
             const match = img.match(/^data:([^;]+);base64,(.+)$/);
             if (match) {
@@ -308,10 +344,10 @@ export async function POST(request: NextRequest) {
       const generateRequest: ImageGenerateRequest = {
         modelId,
         prompt: prompt || '',
-        size: resolvedTarget.size || (typeof size === 'string' ? size.trim() || undefined : undefined),
+        size: resolvedTarget.size || size,
         aspectRatio,
         imageSize,
-        quality: quality || undefined,
+        quality,
         images: imageList.length > 0 ? imageList : undefined,
       };
 
@@ -337,8 +373,8 @@ export async function POST(request: NextRequest) {
         modelId,
         aspectRatio,
         imageSize,
-        size: resolvedTarget.size || (typeof size === 'string' ? size.trim() || undefined : undefined),
-        quality: quality || undefined,
+        size: resolvedTarget.size || size,
+        quality,
         imageCount: imageList.length,
         progress: 0,
         clientRequestId: clientRequestId || undefined,

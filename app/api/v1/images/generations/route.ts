@@ -68,12 +68,11 @@ export async function POST(request: NextRequest) {
       idempotencyKey: requestIdempotencyKey(request, 'sanhub-v1-image'),
     };
 
-    // extra_body.google.image_config 的 aspectRatio/imageSize
-    // 有 size 时 resolveImageSize 会覆盖，即 size 优先级更高
-    if (!imageRequest.aspectRatio && parsed.aspectRatio) {
+    // 显式 aspect_ratio / image_size 优先于从 size 像素值推导出的兜底值。
+    if (parsed.aspectRatio) {
       imageRequest.aspectRatio = parsed.aspectRatio;
     }
-    if (!imageRequest.imageSize && parsed.imageSize) {
+    if (parsed.imageSize) {
       imageRequest.imageSize = parsed.imageSize;
     }
 

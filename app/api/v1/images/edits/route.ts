@@ -72,10 +72,10 @@ export async function POST(request: NextRequest) {
       idempotencyKey: requestIdempotencyKey(request, 'sanhub-v1-image-edit'),
     };
 
-    if (!imageRequest.aspectRatio && parsed.aspectRatio) {
+    if (parsed.aspectRatio) {
       imageRequest.aspectRatio = parsed.aspectRatio;
     }
-    if (!imageRequest.imageSize && parsed.imageSize) {
+    if (parsed.imageSize) {
       imageRequest.imageSize = parsed.imageSize;
     }
 

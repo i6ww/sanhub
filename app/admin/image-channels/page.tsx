@@ -94,29 +94,10 @@ const GEMINI_PRO_SIZE_GROUPS_PIXELS: SizeResolutionGroup[] = [
   },
 ];
 
-// Gemini 3 Pro model ID mapping (for dynamic model selection)
-// Format: gemini-3.0-pro-image-{ratio}[-{size}]
-const buildGeminiProModelGroups = (baseModel: string): SizeResolutionGroup[] => {
-  const baseName = baseModel.replace(/-(landscape|portrait|square|four-three|three-four)(-2k|-4k)?$/i, '');
-
-  const ratioToSuffix: Record<string, string> = {
-    '1:1': 'square',
-    '16:9': 'landscape',
-    '9:16': 'portrait',
-    '4:3': 'four-three',
-    '3:4': 'three-four',
-  };
-
-  const sizes = ['1K', '2K', '4K'];
-  const sizeSuffixes: Record<string, string> = { '1K': '', '2K': '-2k', '4K': '-4k' };
-
-  return sizes.map((size) => ({
-    size,
-    rows: Object.entries(ratioToSuffix).map(([ratio, suffix]) => ({
-      ratio,
-      resolution: `${baseName}-${suffix}${sizeSuffixes[size]}`,
-    })),
-  }));
+// 旧版 SanHub 曾使用 ratio 后缀模型名；新版 Gemini 原生接口使用一个模型名
+// 配合 generationConfig.responseFormat.image 控制比例和分辨率。
+const buildGeminiProModelGroups = (_baseModel: string): SizeResolutionGroup[] => {
+  return cloneSizeGroups(GEMINI_PRO_SIZE_GROUPS_PIXELS);
 };
 
 type RemoteModelOption = {
@@ -338,7 +319,7 @@ function buildModelPreset(channelType: ImageAdminChannelType, presetId: ModelPre
       channelType === 'apexerapi'
         ? 'gemini_3.1_flash_image_preview'
         : channelType === 'gemini'
-        ? 'gemini-2.5-flash-image'
+        ? 'gemini-3.1-flash-image-preview'
         : channelType === 'modelscope'
         ? 'Qwen/Qwen-Image'
         : channelType === 'gitee'
@@ -380,7 +361,7 @@ function buildModelPreset(channelType: ImageAdminChannelType, presetId: ModelPre
     form.apiModel = channelType === 'apexerapi'
       ? 'gemini_3.0_pro_image_preview'
       : channelType === 'gemini'
-      ? 'gemini-3.0-pro-image-square'
+      ? 'gemini-3-pro-image-preview'
       : '';
     form.features = {
       textToImage: true,
@@ -1408,9 +1389,9 @@ export default function ImageChannelsPage() {
                     type="button"
                     onClick={() => setSizeGroups(buildGeminiProModelGroups(modelForm.apiModel))}
                     className="text-xs text-blue-400 hover:text-blue-300"
-                    title="根据模型ID自动生成对应的模型ID映射，如 gemini-3.0-pro-image-square-2k"
+                    title="填充 Gemini 官方 imageSize / aspectRatio 使用的像素分辨率"
                   >
-                    填充模型ID映射
+                    填充 Gemini 分辨率
                   </button>
                   <button
                     type="button"

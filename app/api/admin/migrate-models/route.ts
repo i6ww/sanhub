@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
       channelId: geminiChannel.id,
       name: 'Gemini Nano',
       description: '极速生成',
-      apiModel: 'gemini-2.5-flash-image',
+      apiModel: 'gemini-3.1-flash-image-preview',
       features: { textToImage: true, imageToImage: true, upscale: false, matting: false, multipleImages: true, imageSize: false },
       aspectRatios: ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'],
       resolutions: {

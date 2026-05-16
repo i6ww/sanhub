@@ -687,10 +687,10 @@ export async function POST(request: NextRequest) {
     idempotencyKey: requestIdempotencyKey(request, completionId),
   };
 
-  if (!imageRequest.aspectRatio && aspectRatioFromConfig) {
+  if (aspectRatioFromConfig) {
     imageRequest.aspectRatio = aspectRatioFromConfig;
   }
-  if (!imageRequest.imageSize && imageSizeFromConfig) {
+  if (imageSizeFromConfig) {
     imageRequest.imageSize = imageSizeFromConfig;
   }
 
