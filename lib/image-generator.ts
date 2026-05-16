@@ -290,7 +290,7 @@ function pickGeneratedImage(data: unknown, preferred?: unknown): string | undefi
 function summarizeImageResponse(value: unknown): string {
   const seen = new WeakSet<object>();
   const summarize = (item: unknown, depth = 0): unknown => {
-    if (depth > 3) return Array.isArray(item) ? '[array]' : typeof item;
+    if (depth > 6) return Array.isArray(item) ? `[array:${item.length}]` : typeof item;
     if (typeof item === 'string') {
       if (item.startsWith('data:image/')) return `data-url(${item.length})`;
       return item.length > 120 ? `string(${item.length})` : item;
@@ -299,7 +299,7 @@ function summarizeImageResponse(value: unknown): string {
     if (seen.has(item)) return '[circular]';
     seen.add(item);
     if (Array.isArray(item)) {
-      return item.length > 0 ? [summarize(item[0], depth + 1)] : [];
+      return item.slice(0, 3).map((entry) => summarize(entry, depth + 1));
     }
     const output: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(item as Record<string, unknown>)) {
@@ -518,24 +518,32 @@ async function generateWithGemini(
     parts.push({ text: request.prompt });
   }
 
+  const aspectRatio = request.aspectRatio || '1:1';
+  const imageConfig: Record<string, unknown> = { aspectRatio };
+  const responseImageConfig: Record<string, unknown> = { aspectRatio };
   const generationConfig: Record<string, unknown> = {
-    responseModalities: ['TEXT', 'IMAGE'],
-    imageConfig: {
-      aspectRatio: request.aspectRatio || '1:1',
+    responseModalities: ['Image'],
+    imageConfig,
+    responseFormat: {
+      image: responseImageConfig,
     },
   };
 
   if (request.imageSize) {
-    (generationConfig.imageConfig as Record<string, unknown>).imageSize = request.imageSize;
+    imageConfig.imageSize = request.imageSize;
+    responseImageConfig.imageSize = request.imageSize;
   }
   if (request.size) {
-    (generationConfig.imageConfig as Record<string, unknown>).size = request.size.replace(/×/g, 'x');
+    const normalizedSize = request.size.replace(/×/g, 'x');
+    imageConfig.size = normalizedSize;
+    responseImageConfig.size = normalizedSize;
   }
 
   const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'x-goog-api-key': key,
       ...(request.idempotencyKey
         ? {
             'Idempotency-Key': request.idempotencyKey,
