@@ -212,7 +212,7 @@ function classifyApexerApiModel(model: RemoteModel): ClassifiedVideoModel | null
   return {
     apiModel,
     name: apiModel === 'sora-2' ? 'Sora 2' : `Sora (${apiModel})`,
-    description: 'ApexerAPI /v1/videos 视频生成模型，SanHub 会统一按 sora-2 请求格式发送。',
+    description: 'adobe2api /v1/videos 视频生成模型，SanHub 会统一按 sora-2 请求格式发送。',
     category: 't2v',
     categoryLabel: '视频生成',
     features: {
@@ -372,7 +372,7 @@ async function fetchChannelRemoteModels(channelId: string): Promise<{
     throw new Error('渠道不存在');
   }
   if (channel.type !== 'flow2api' && channel.type !== 'apexerapi') {
-    throw new Error('仅支持 Flow2API / ApexerAPI 渠道一键导入');
+    throw new Error('仅支持 Flow2API / adobe2api 渠道一键导入');
   }
   if (!channel.baseUrl) {
     throw new Error('该渠道未配置 Base URL');

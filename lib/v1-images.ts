@@ -178,20 +178,28 @@ export async function parseOpenAIImageRequest(request: NextRequest): Promise<Par
   // 提取 extra_body.google.image_config（Gemini/Banana 原生参数透传）
   let aspectRatio: string | undefined;
   let imageSize: string | undefined;
+  let configSize: string | undefined;
+  aspectRatio = (typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio.trim() : undefined)
+    || (typeof payload.aspectRatio === 'string' ? payload.aspectRatio.trim() : undefined);
+  imageSize = (typeof payload.image_size === 'string' ? payload.image_size.trim() : undefined)
+    || (typeof payload.imageSize === 'string' ? payload.imageSize.trim() : undefined);
   const extraBody = payload.extra_body as Record<string, unknown> | undefined;
   const googleConfig = extraBody?.google as Record<string, unknown> | undefined;
   const imageConfig = googleConfig?.image_config as Record<string, unknown> | undefined;
   if (imageConfig) {
-    aspectRatio = (typeof imageConfig.aspect_ratio === 'string' ? imageConfig.aspect_ratio : undefined)
-      || (typeof imageConfig.aspectRatio === 'string' ? imageConfig.aspectRatio : undefined);
-    imageSize = (typeof imageConfig.image_size === 'string' ? imageConfig.image_size : undefined)
-      || (typeof imageConfig.imageSize === 'string' ? imageConfig.imageSize : undefined);
+    aspectRatio = aspectRatio
+      || (typeof imageConfig.aspect_ratio === 'string' ? imageConfig.aspect_ratio.trim() : undefined)
+      || (typeof imageConfig.aspectRatio === 'string' ? imageConfig.aspectRatio.trim() : undefined);
+    imageSize = imageSize
+      || (typeof imageConfig.image_size === 'string' ? imageConfig.image_size.trim() : undefined)
+      || (typeof imageConfig.imageSize === 'string' ? imageConfig.imageSize.trim() : undefined);
+    configSize = typeof imageConfig.size === 'string' ? imageConfig.size.trim() : undefined;
   }
 
   return {
     model: typeof payload.model === 'string' ? payload.model.trim() : undefined,
     prompt: typeof payload.prompt === 'string' ? payload.prompt.trim() : '',
-    size: typeof payload.size === 'string' ? payload.size.trim() : undefined,
+    size: (typeof payload.size === 'string' ? payload.size.trim() : undefined) || configSize,
     responseFormat: typeof payload.response_format === 'string' ? payload.response_format.trim() : undefined,
     imageReferences: collectPayloadImageReferences(payload),
     aspectRatio,

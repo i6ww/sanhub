@@ -16,7 +16,7 @@ import type {
 } from '@/types';
 
 const CHANNEL_TYPES: { value: VideoChannelType; label: string }[] = [
-  { value: 'apexerapi', label: 'ApexerAPI' },
+  { value: 'apexerapi', label: 'adobe2api' },
   { value: 'sora', label: 'Sora API' },
   { value: 'openai-compatible', label: 'OpenAI 流式' },
   { value: 'flow2api', label: 'Flow2API' },
@@ -48,7 +48,7 @@ function supportsRemoteVideoModelImport(channel: VideoChannel): boolean {
 }
 
 function remoteVideoImportLabel(channel?: VideoChannel): string {
-  return channel?.type === 'apexerapi' ? 'ApexerAPI' : 'Flow2API';
+  return channel?.type === 'apexerapi' ? 'adobe2api' : 'Flow2API';
 }
 
 const DEFAULT_ASPECT_RATIOS: AspectRatioRow[] = [
@@ -888,7 +888,7 @@ export default function VideoChannelsPage() {
         <div className="rounded-xl border border-border/70 bg-card/50 p-4 text-sm text-foreground/60">
           {channelForm.type === 'flow2api' && '\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u4f18\u5148\u5c1d\u8bd5\u81ea\u52a8\u62c9\u53d6\u5e76\u5bfc\u5165\u8fdc\u7aef\u6a21\u578b\uff1b\u540e\u7eed\u4e5f\u53ef\u4ee5\u5728\u6e20\u9053\u5361\u7247\u91cc\u4f7f\u7528\u201c\u4e00\u952e\u5bfc\u5165\u201d\u6216\u624b\u52a8\u52fe\u9009\u5bfc\u5165\u3002'}
           {channelForm.type === 'grok2api' && `\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 Grok \u6a21\u677f\u6a21\u578b\uff0cvideo_length \u5141\u8bb8 5-${GROK_MAX_VIDEO_LENGTH_SECONDS} \u79d2\uff0c\u5e76\u4f1a\u7ee7\u7eed\u900f\u4f20\u5230\u751f\u6210\u8bf7\u6c42\u3002`}
-          {channelForm.type === 'apexerapi' && '\u9002\u7528\u4e8e ApexerAPI /v1/videos\uff0c\u4fdd\u5b58\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 sora-2 \u9ed8\u8ba4\u6a21\u578b\u3002'}
+          {channelForm.type === 'apexerapi' && '\u9002\u7528\u4e8e adobe2api /v1/videos\uff0c\u4fdd\u5b58\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 sora-2 \u9ed8\u8ba4\u6a21\u578b\u3002'}
           {channelForm.type === 'sora' && '\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 Sora \u9ed8\u8ba4\u6a21\u578b\uff0c\u901a\u5e38\u4e0d\u9700\u8981\u624b\u5de5\u586b\u5199\u7b2c\u4e00\u6761\u6a21\u578b\u3002'}
           {channelForm.type === 'openai-compatible' && '\u9002\u7528\u4e8e\u517c\u5bb9 /v1/chat/completions \u7684\u89c6\u9891\u63a5\u53e3\u3002\u5148\u5efa\u6e20\u9053\uff0c\u518d\u6309\u5b9e\u9645\u6a21\u578b ID \u8865\u5145\u6a21\u578b\u5373\u53ef\u3002'}
         </div>
@@ -992,7 +992,7 @@ export default function VideoChannelsPage() {
             <div className="rounded-xl border border-border/70 bg-card/50 p-4 text-sm text-foreground/60">
               {selectedChannel.type === 'flow2api' && '\u5df2\u77e5\u6a21\u578b ID \u65f6\u518d\u624b\u52a8\u6dfb\u52a0\uff1b\u5982\u679c\u53ea\u662f\u60f3\u628a\u8fdc\u7aef\u6a21\u578b\u62c9\u4e0b\u6765\uff0c\u4f18\u5148\u4f7f\u7528\u6e20\u9053\u5361\u7247\u91cc\u7684\u201c\u4e00\u952e\u5bfc\u5165\u201d\u6216\u5237\u65b0\u9009\u62e9\u5bfc\u5165\u3002'}
               {selectedChannel.type === 'grok2api' && `\u5df2\u6309 Grok \u6a21\u677f\u9884\u586b\uff0cvideo_length \u652f\u6301 5-${GROK_MAX_VIDEO_LENGTH_SECONDS} \u79d2\uff0c\u4fdd\u5b58\u540e\u4f1a\u539f\u6837\u900f\u4f20\u5230\u751f\u6210\u8bf7\u6c42\u3002`}
-              {selectedChannel.type === 'apexerapi' && '\u5df2\u6309 ApexerAPI sora-2 \u9884\u586b\uff0cSanHub \u4f1a\u628a sora-video / sora2-* \u8bf7\u6c42\u8f6c\u6210 sora-2\u3002'}
+              {selectedChannel.type === 'apexerapi' && '\u5df2\u6309 adobe2api sora-2 \u9884\u586b\uff0cSanHub \u4f1a\u628a sora-video / sora2-* \u8bf7\u6c42\u8f6c\u6210 sora-2\u3002'}
               {selectedChannel.type === 'sora' && '\u5df2\u6309 Sora \u5e38\u7528\u6a21\u677f\u9884\u586b\uff0c\u901a\u5e38\u53ea\u9700\u8981\u786e\u8ba4\u540d\u79f0\u3001\u9ed8\u8ba4\u65f6\u957f\u548c\u4ef7\u683c\u5373\u53ef\u4fdd\u5b58\u3002'}
               {selectedChannel.type === 'openai-compatible' && '\u6a21\u578b\u7ea7 Base URL / API Key \u53ef\u4ee5\u7559\u7a7a\uff0c\u4fdd\u5b58\u65f6\u4f1a\u81ea\u52a8\u7ee7\u627f\u6e20\u9053\u4e0a\u7684\u914d\u7f6e\u3002'}
             </div>

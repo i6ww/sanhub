@@ -9,7 +9,7 @@ import { toast } from '@/components/ui/toaster';
 import type { ImageChannel, ImageModel, ImageModelFeatures } from '@/types';
 
 const CHANNEL_TYPES = [
-  { value: 'apexerapi', label: 'ApexerAPI', description: 'ApexerAPI image gateway' },
+  { value: 'apexerapi', label: 'adobe2api', description: 'adobe2api image gateway' },
   { value: 'openai-compatible', label: 'OpenAI Images', description: 'OpenAI /v1/images/generations API' },
   { value: 'openai-chat', label: 'OpenAI Chat', description: 'OpenAI /v1/chat/completions API' },
   { value: 'gemini', label: 'Gemini', description: 'Google Gemini Native API' },
@@ -181,10 +181,10 @@ const CHANNEL_FORM_GUIDES: Record<ImageAdminChannelType, {
     recommendedAction: '先保存渠道，再点“智能导入远端模型”',
   },
   apexerapi: {
-    defaultName: 'ApexerAPI',
-    summary: '适合接入 ApexerAPI，覆盖 Banana Pro、Banana 2 和 GPT Image 2。',
-    hint: '填写 ApexerAPI Base URL 与 API Key 后，可直接用预设或从 /v1/models 导入。',
-    recommendedAction: '先保存渠道，再导入或套用 ApexerAPI 预设',
+    defaultName: 'adobe2api',
+    summary: '适合接入 adobe2api，覆盖 Banana Pro、Banana 2 和 GPT Image 2。',
+    hint: '填写 adobe2api Base URL 与 API Key 后，可直接用预设或从 /v1/models 导入。',
+    recommendedAction: '先保存渠道，再导入或套用 adobe2api 预设',
   },
   'openai-chat': {
     defaultName: 'OpenAI Chat',
@@ -223,9 +223,9 @@ const CHANNEL_FORM_GUIDES: Record<ImageAdminChannelType, {
 
 const MANUAL_PRESET_OPTIONS: Record<ImageAdminChannelType, ModelPresetOption[]> = {
   apexerapi: [
-    { id: 'general', label: 'Banana 2', description: 'ApexerAPI gemini_3.1_flash_image_preview。' },
-    { id: 'hd', label: 'Banana Pro', description: 'ApexerAPI gemini_3.0_pro_image_preview，多档分辨率。' },
-    { id: 'edit', label: 'GPT Image 2', description: 'ApexerAPI gpt-image-2，支持参考图。' },
+    { id: 'general', label: 'Banana 2', description: 'adobe2api gemini_3.1_flash_image_preview。' },
+    { id: 'hd', label: 'Banana Pro', description: 'adobe2api gemini_3.0_pro_image_preview，多档分辨率。' },
+    { id: 'edit', label: 'GPT Image 2', description: 'adobe2api gpt-image-2，支持参考图。' },
   ],
   'openai-compatible': [
     { id: 'general', label: '标准生图', description: '适合常规文生图，带默认常用比例。' },

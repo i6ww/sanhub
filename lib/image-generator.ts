@@ -303,14 +303,11 @@ async function generateWithOpenAI(
     payload.quality = request.quality;
   }
 
-  // Only send Gemini-style image_config when there is no explicit OpenAI size.
-  // Some compatible gateways derive low-res sizes from aspect_ratio and let it
-  // override the pixel size, e.g. 9:16 -> 720x1280.
-  const hasExplicitPixelSize = typeof payload.size === 'string' && isSizeValue(payload.size);
-  if (!hasExplicitPixelSize && request.imageSize) {
+  if (request.imageSize) {
     const googleConfig: Record<string, string> = {};
     if (request.aspectRatio) googleConfig.aspect_ratio = request.aspectRatio;
     googleConfig.image_size = request.imageSize;
+    if (typeof payload.size === 'string') googleConfig.size = payload.size;
     payload.extra_body = { google: { image_config: googleConfig } };
   }
 
@@ -399,6 +396,9 @@ async function generateWithGemini(
 
   if (request.imageSize) {
     (generationConfig.imageConfig as Record<string, unknown>).imageSize = request.imageSize;
+  }
+  if (request.size) {
+    (generationConfig.imageConfig as Record<string, unknown>).size = request.size.replace(/×/g, 'x');
   }
 
   const response = await fetchWithRetry(undiciFetch, url, () => ({
@@ -821,7 +821,12 @@ async function generateWithOpenAIChat(
     contentParts.push({ type: 'text', text: request.prompt });
   }
 
-  const payload = {
+  const imageConfig: Record<string, string> = {};
+  if (request.aspectRatio) imageConfig.aspect_ratio = request.aspectRatio;
+  if (request.imageSize) imageConfig.image_size = request.imageSize;
+  if (request.size) imageConfig.size = request.size.replace(/×/g, 'x');
+
+  const payload: Record<string, unknown> = {
     model: apiModel,
     messages: [
       {
@@ -833,6 +838,9 @@ async function generateWithOpenAIChat(
     ],
     stream: true,
   };
+  if (Object.keys(imageConfig).length > 0) {
+    payload.extra_body = { google: { image_config: imageConfig } };
+  }
 
   const response = await fetchWithRetry(undiciFetch, url, () => ({
     method: 'POST',
@@ -884,8 +892,20 @@ async function generateWithOpenAIChat(
       try {
         const parsed = JSON.parse(data);
         const delta = parsed.choices?.[0]?.delta;
-        if (delta?.content) {
+        if (typeof delta?.content === 'string') {
           fullContent += delta.content;
+        } else if (Array.isArray(delta?.content)) {
+          fullContent += delta.content
+            .map((item: unknown) => {
+              if (typeof item === 'string') return item;
+              const imageUrl = pickImageUrl(item);
+              if (imageUrl) return imageUrl;
+              if (item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string') {
+                return (item as { text: string }).text;
+              }
+              return '';
+            })
+            .join('');
         }
         if (delta?.reasoning_content) {
           reasoningContent += delta.reasoning_content;

@@ -146,6 +146,7 @@ export async function POST(request: NextRequest) {
     const {
       modelId,
       prompt,
+      size,
       aspectRatio,
       imageSize,
       quality,
@@ -307,6 +308,7 @@ export async function POST(request: NextRequest) {
       const generateRequest: ImageGenerateRequest = {
         modelId,
         prompt: prompt || '',
+        size: resolvedTarget.size || (typeof size === 'string' ? size.trim() || undefined : undefined),
         aspectRatio,
         imageSize,
         quality: quality || undefined,
@@ -335,6 +337,7 @@ export async function POST(request: NextRequest) {
         modelId,
         aspectRatio,
         imageSize,
+        size: resolvedTarget.size || (typeof size === 'string' ? size.trim() || undefined : undefined),
         quality: quality || undefined,
         imageCount: imageList.length,
         progress: 0,

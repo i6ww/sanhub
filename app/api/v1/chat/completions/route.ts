@@ -660,21 +660,29 @@ export async function POST(request: NextRequest) {
   // 提取 extra_body.google.image_config（Gemini/Banana 原生参数透传）
   let aspectRatioFromConfig: string | undefined;
   let imageSizeFromConfig: string | undefined;
+  let sizeFromConfig: string | undefined;
+  aspectRatioFromConfig = (typeof payload.aspect_ratio === 'string' ? payload.aspect_ratio.trim() : undefined)
+    || (typeof payload.aspectRatio === 'string' ? payload.aspectRatio.trim() : undefined);
+  imageSizeFromConfig = (typeof payload.image_size === 'string' ? payload.image_size.trim() : undefined)
+    || (typeof payload.imageSize === 'string' ? payload.imageSize.trim() : undefined);
   const extraBody = (payload as Record<string, unknown>).extra_body as Record<string, unknown> | undefined;
   const googleCfg = extraBody?.google as Record<string, unknown> | undefined;
   const imageCfg = googleCfg?.image_config as Record<string, unknown> | undefined;
   if (imageCfg) {
-    aspectRatioFromConfig = (typeof imageCfg.aspect_ratio === 'string' ? imageCfg.aspect_ratio : undefined)
-      || (typeof imageCfg.aspectRatio === 'string' ? imageCfg.aspectRatio : undefined);
-    imageSizeFromConfig = (typeof imageCfg.image_size === 'string' ? imageCfg.image_size : undefined)
-      || (typeof imageCfg.imageSize === 'string' ? imageCfg.imageSize : undefined);
+    aspectRatioFromConfig = aspectRatioFromConfig
+      || (typeof imageCfg.aspect_ratio === 'string' ? imageCfg.aspect_ratio.trim() : undefined)
+      || (typeof imageCfg.aspectRatio === 'string' ? imageCfg.aspectRatio.trim() : undefined);
+    imageSizeFromConfig = imageSizeFromConfig
+      || (typeof imageCfg.image_size === 'string' ? imageCfg.image_size.trim() : undefined)
+      || (typeof imageCfg.imageSize === 'string' ? imageCfg.imageSize.trim() : undefined);
+    sizeFromConfig = typeof imageCfg.size === 'string' ? imageCfg.size.trim() : undefined;
   }
 
   const imageRequest: ImageGenerateRequest = {
     modelId: imageModelId,
     prompt: prompt || '',
     quality: typeof payload.quality === 'string' ? payload.quality.trim() : undefined,
-    ...resolveImageSize(payload.size),
+    ...resolveImageSize(payload.size || sizeFromConfig),
     images: imageInputs.length > 0 ? imageInputs : undefined,
     idempotencyKey: requestIdempotencyKey(request, completionId),
   };
