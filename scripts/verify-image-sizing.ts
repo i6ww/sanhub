@@ -29,7 +29,7 @@ assert.equal(
     { aspectRatio: '16：9', imageSize: '4K' },
     '5504x3072'
   ),
-  'gemini-3.0-pro-image-landscape-4k'
+  'gemini_3.0_pro_image_preview'
 );
 
 assert.equal(
@@ -38,7 +38,7 @@ assert.equal(
     { aspectRatio: '16:9', imageSize: '4K' },
     '5504x3072'
   ),
-  'gemini-3.1-flash-image-landscape-4k'
+  'gemini_3.1_flash_image_preview'
 );
 
 console.log('image sizing verification passed');
