@@ -151,7 +151,7 @@ const GenerationResultCard = memo(function GenerationResultCard({
   return (
     <div
       ref={cardRef}
-      className="group relative aspect-video bg-card/60 rounded-xl overflow-hidden cursor-pointer border border-border/70 hover:border-border transition-colors"
+      className="group relative aspect-video bg-card/60 rounded-xl overflow-hidden cursor-pointer border border-border/70 hover:border-sky-500/50 hover:scale-[1.02] hover:shadow-[0_8px_24px_rgba(0,0,0,0.4),0_0_15px_rgba(14,165,233,0.15)] transition-all duration-300"
       style={deferMedia ? CARD_CONTAIN_STYLE : undefined}
       onClick={handleClick}
       onMouseEnter={handleMouseEnter}
@@ -163,7 +163,7 @@ const GenerationResultCard = memo(function GenerationResultCard({
             <video
               ref={videoRef}
               src={generation.resultUrl}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               muted
               loop
               playsInline
@@ -172,9 +172,9 @@ const GenerationResultCard = memo(function GenerationResultCard({
           ) : (
             <div className="absolute inset-0 bg-gradient-to-br from-card/70 to-background/80" />
           )}
-          <div className="absolute top-2 left-2 px-2 py-1 bg-background/70 rounded-md flex items-center gap-1">
-            <span className="text-[10px] font-medium text-foreground">#{index + 1}</span>
-            <Play className="w-3 h-3 text-foreground" />
+          <div className="absolute top-2.5 left-2.5 px-2.5 py-1 bg-card/75 border border-border/80 backdrop-blur-md rounded-lg flex items-center gap-1.5 shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
+            <span className="text-[10px] font-bold text-sky-400">#{index + 1}</span>
+            <Play className="w-3 h-3 text-sky-400 animate-pulse" />
           </div>
         </>
       ) : (
@@ -184,7 +184,7 @@ const GenerationResultCard = memo(function GenerationResultCard({
             <img
               src={generation.resultUrl}
               alt={generation.prompt}
-              className={`w-full h-full object-cover transition-opacity duration-300 ${
+              className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-105 ${
                 imageLoaded ? 'opacity-100' : 'opacity-0'
               }`}
               loading="lazy"
@@ -193,28 +193,28 @@ const GenerationResultCard = memo(function GenerationResultCard({
               onLoad={() => setImageLoaded(true)}
             />
           )}
-          <div className="absolute top-2 left-2 px-2 py-1 bg-background/70 rounded-md">
-            <span className="text-[10px] font-medium text-foreground">#{index + 1}</span>
+          <div className="absolute top-2.5 left-2.5 px-2.5 py-1 bg-card/75 border border-border/80 backdrop-blur-md rounded-lg shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
+            <span className="text-[10px] font-bold text-sky-400">#{index + 1}</span>
           </div>
         </>
       )}
-      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity">
-        <div className="w-14 h-14 bg-background/70 rounded-full flex items-center justify-center">
-          <Maximize2 className="w-6 h-6 text-foreground" />
+      <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 bg-gradient-to-t from-background/40 via-transparent to-transparent">
+        <div className="w-12 h-12 bg-background/85 border border-border/80 rounded-full flex items-center justify-center shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-transform duration-300 backdrop-blur-sm">
+          <Maximize2 className="w-5 h-5 text-foreground/90" />
         </div>
       </div>
       <div
-        className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-opacity"
+        className="absolute top-2.5 right-2.5 z-10 opacity-0 group-hover:opacity-100 [@media(hover:none)]:opacity-100 transition-all duration-300 transform -translate-y-1 group-hover:translate-y-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             onClick={(e) => {
               e.stopPropagation();
               openAssetInNewTab(generation.resultUrl);
             }}
-            className="w-8 h-8 bg-background/70 border border-border/70 rounded-lg flex items-center justify-center text-foreground hover:bg-background/90 transition-colors"
+            className="w-8 h-8 bg-card/85 border border-border/80 rounded-lg flex items-center justify-center text-foreground/80 hover:text-sky-400 hover:bg-sky-500/10 hover:border-sky-500/30 backdrop-blur-sm transition-all duration-200 shadow-md"
             title={openTitle}
             aria-label={openTitle}
           >
@@ -228,11 +228,11 @@ const GenerationResultCard = memo(function GenerationResultCard({
                 onRemoveGeneration(generation);
               }}
               disabled={busyGenerationId === generation.id}
-              className="w-8 h-8 bg-background/70 border border-border/70 rounded-lg flex items-center justify-center text-foreground hover:bg-red-500/40 transition-colors disabled:cursor-not-allowed disabled:opacity-70"
+              className="w-8 h-8 bg-card/85 border border-border/80 rounded-lg flex items-center justify-center text-foreground/80 hover:text-red-400 hover:bg-red-500/15 hover:border-red-500/35 backdrop-blur-sm transition-all duration-200 shadow-md disabled:cursor-not-allowed disabled:opacity-70"
               title="删除作品"
             >
               {busyGenerationId === generation.id ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-red-400" />
               ) : (
                 <Trash2 className="w-3.5 h-3.5" />
               )}
@@ -240,8 +240,8 @@ const GenerationResultCard = memo(function GenerationResultCard({
           )}
         </div>
       </div>
-      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/80 via-background/30 to-transparent">
-        <p className="text-xs text-foreground/80 truncate">{generation.prompt || '无提示词'}</p>
+      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/90 via-background/40 to-transparent pointer-events-none">
+        <p className="text-xs text-foreground/90 font-medium truncate tracking-wide">{generation.prompt || '无提示词'}</p>
       </div>
     </div>
   );

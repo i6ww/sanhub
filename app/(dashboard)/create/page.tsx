@@ -73,7 +73,7 @@ function CreateModeSwitcher({
   onChange: (mode: CreateMode) => void;
 }) {
   return (
-    <div className="inline-flex w-full flex-wrap items-center gap-1 rounded-xl border border-border/70 bg-card/50 p-1 sm:w-auto sm:flex-nowrap">
+    <div className="relative inline-flex w-full flex-wrap items-center gap-1 rounded-xl border border-border/80 bg-background/40 p-1 sm:w-auto sm:flex-nowrap shadow-[inset_0_1px_4px_rgba(0,0,0,0.4)] backdrop-blur-md">
       {CREATE_TABS.map((tab) => {
         const isActive = mode === tab.id;
 
@@ -83,13 +83,16 @@ function CreateModeSwitcher({
             type="button"
             onClick={() => onChange(tab.id)}
             className={cn(
-              'flex h-10 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-3 text-xs font-medium transition-colors sm:min-w-[124px]',
+              'relative flex h-9 min-w-0 flex-1 items-center justify-center gap-2 rounded-lg px-4 text-xs font-semibold tracking-wide transition-all duration-300 sm:min-w-[130px] overflow-hidden',
               isActive
-                ? 'bg-background/80 text-foreground shadow-sm'
-                : 'text-foreground/55 hover:bg-background/50 hover:text-foreground/80'
+                ? 'bg-gradient-to-br from-sky-500/15 to-indigo-500/10 text-sky-400 border border-sky-500/25 shadow-[0_2px_10px_rgba(0,0,0,0.2)]'
+                : 'text-foreground/45 hover:text-foreground/75 hover:bg-card/40 border border-transparent'
             )}
           >
-            <tab.icon className="h-3.5 w-3.5 shrink-0" />
+            {isActive && (
+              <div className="absolute bottom-0 left-1/4 right-1/4 h-0.5 bg-gradient-to-r from-sky-400 to-indigo-500 shadow-[0_0_8px_rgba(56,189,248,0.7)]" />
+            )}
+            <tab.icon className={cn('h-3.5 w-3.5 shrink-0 transition-transform duration-300', isActive ? 'scale-110 text-sky-400' : 'text-foreground/45')} />
             <span className="truncate">{tab.label}</span>
           </button>
         );

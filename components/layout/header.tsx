@@ -71,9 +71,9 @@ export function Header({ user }: HeaderProps) {
         </div>
       </header>
 
-      {/* Mobile Bottom Tab Navigation */}
-      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-card/95 backdrop-blur-2xl border-t border-border/50 pb-[env(safe-area-inset-bottom)]">
-        <div className="flex justify-around items-center h-14">
+      {/* Mobile Bottom Tab Navigation - Premium Floating Dock */}
+      <div className="lg:hidden fixed bottom-5 left-0 right-0 z-50 px-4 flex justify-center">
+        <nav className="w-full max-w-sm bg-card/80 border border-border/80 rounded-2xl shadow-[0_8px_32px_rgba(0,0,0,0.55),0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl px-2 py-1.5 flex justify-around items-center">
           {visibleMobileNavItems.map((item) => {
             const isCreateEntry = item.href === '/create';
             const isActive = isCreateEntry
@@ -84,17 +84,20 @@ export function Header({ user }: HeaderProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'flex flex-col items-center justify-center flex-1 h-full py-1 transition-colors active:scale-95',
-                  isActive ? 'text-sky-400' : 'text-foreground/40'
+                  'relative flex flex-col items-center justify-center py-1.5 px-3 rounded-xl transition-all duration-300 active:scale-95 flex-1 min-w-0',
+                  isActive ? 'text-sky-400' : 'text-foreground/45 hover:text-foreground/75'
                 )}
               >
-                <item.icon className="w-5 h-5 mb-0.5" strokeWidth={isActive ? 2 : 1.5} />
-                <span className="text-[10px] font-medium">{item.label}</span>
+                {isActive && (
+                  <div className="absolute inset-0 bg-gradient-to-br from-sky-500/12 to-indigo-500/12 rounded-xl border border-sky-500/25 shadow-[0_2px_12px_rgba(14,165,233,0.15)] -z-10 animate-fadeIn" />
+                )}
+                <item.icon className="w-5 h-5 mb-0.5 transition-transform duration-300" strokeWidth={isActive ? 2.2 : 1.6} />
+                <span className="text-[9px] font-bold tracking-wider">{item.label}</span>
               </Link>
             );
           })}
-        </div>
-      </nav>
+        </nav>
+      </div>
     </>
   );
 }

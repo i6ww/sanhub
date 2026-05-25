@@ -271,10 +271,10 @@ const GenerationCard = memo(function GenerationCard({
   return (
     <div
       ref={cardRef}
-      className={`group relative aspect-video bg-card/60 rounded-xl overflow-hidden cursor-pointer border transition-all ${
+      className={`group relative aspect-video bg-card/60 rounded-xl overflow-hidden cursor-pointer border transition-all duration-300 ${
         isSelected 
-          ? 'border-sky-500 ring-2 ring-sky-500/40' 
-          : 'border-border/70 hover:border-border'
+          ? 'border-sky-500 ring-2 ring-sky-500/40 shadow-[0_0_20px_rgba(14,165,233,0.25)]' 
+          : 'border-border/70 hover:border-sky-500/50 hover:scale-[1.02] hover:shadow-[0_8px_24px_rgba(0,0,0,0.4),0_0_15px_rgba(14,165,233,0.15)]'
       }`}
       style={CARD_CONTAIN_STYLE}
       onClick={handleClick}
@@ -287,7 +287,7 @@ const GenerationCard = memo(function GenerationCard({
             <video
               ref={videoRef}
               src={gen.resultUrl}
-              className="w-full h-full object-cover"
+              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
               muted
               loop
               playsInline
@@ -296,9 +296,9 @@ const GenerationCard = memo(function GenerationCard({
           ) : (
             <div className="absolute inset-0 bg-gradient-to-br from-card/70 to-background/80" />
           )}
-          <div className="absolute top-2 left-2 px-2 py-1 bg-background/60 backdrop-blur-sm rounded-md flex items-center gap-1">
-            <Play className="w-3 h-3 text-foreground" />
-            <span className="text-[10px] text-foreground">VIDEO</span>
+          <div className="absolute top-2.5 left-2.5 px-2.5 py-1 bg-card/75 border border-border/80 backdrop-blur-md rounded-lg flex items-center gap-1.5 shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
+            <Play className="w-3 h-3 text-sky-400 animate-pulse" />
+            <span className="text-[10px] font-bold text-sky-400">VIDEO</span>
           </div>
         </>
       ) : (
@@ -310,7 +310,7 @@ const GenerationCard = memo(function GenerationCard({
             <img
               src={gen.resultUrl}
               alt={gen.prompt}
-              className={`w-full h-full object-cover transition-opacity duration-300 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
+              className={`w-full h-full object-cover transition-all duration-500 group-hover:scale-105 ${imageLoaded ? 'opacity-100' : 'opacity-0'}`}
               loading="lazy"
               decoding="async"
               onLoad={() => setImageLoaded(true)}
@@ -321,11 +321,11 @@ const GenerationCard = memo(function GenerationCard({
       
       {/* 选择模式下的复选框 */}
       {selectMode && (
-        <div className="absolute top-2 left-2 z-10">
+        <div className="absolute top-2.5 left-2.5 z-10">
           <div className={`w-6 h-6 rounded-md flex items-center justify-center transition-all ${
             isSelected 
-              ? 'bg-sky-500' 
-              : 'bg-background/60 backdrop-blur-sm border border-border'
+              ? 'bg-sky-500 shadow-[0_0_10px_rgba(14,165,233,0.5)]' 
+              : 'bg-card/75 border border-border backdrop-blur-md'
           }`}>
             {isSelected && <Check className="w-4 h-4 text-foreground" />}
           </div>
@@ -333,21 +333,21 @@ const GenerationCard = memo(function GenerationCard({
       )}
       
       {!selectMode && (
-        <div className="absolute inset-0 bg-background/70 opacity-0 group-hover:opacity-100 transition-all flex items-center justify-center">
-          <div className="w-12 h-12 bg-card/70 border border-border/70 backdrop-blur-sm rounded-full flex items-center justify-center">
-            <Maximize2 className="w-5 h-5 text-foreground" />
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 bg-gradient-to-t from-background/40 via-transparent to-transparent">
+          <div className="w-12 h-12 bg-background/85 border border-border/80 rounded-full flex items-center justify-center shadow-lg transform translate-y-2 group-hover:translate-y-0 transition-transform duration-300 backdrop-blur-sm">
+            <Maximize2 className="w-5 h-5 text-foreground/90" />
           </div>
         </div>
       )}
-      <div className="absolute top-2 right-2">
-        <span className="px-2 py-1 bg-background/60 backdrop-blur-sm text-foreground text-[10px] rounded-md flex items-center gap-1">
-          <badge.icon className="w-3 h-3" />
+      <div className="absolute top-2.5 right-2.5">
+        <span className="px-2.5 py-1 bg-card/75 border border-border/85 backdrop-blur-md text-foreground/90 text-[10px] font-bold rounded-lg flex items-center gap-1.5 shadow-[0_2px_8px_rgba(0,0,0,0.2)]">
+          <badge.icon className="w-3 h-3 text-sky-400" />
           {badge.label}
         </span>
       </div>
-      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/80 via-background/30 to-transparent">
-        <p className="text-xs text-foreground/80 truncate">{gen.prompt || '无提示词'}</p>
-        <p className="text-[10px] text-foreground/40 mt-1">{formatDate(gen.createdAt)}</p>
+      <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-background/90 via-background/45 to-transparent pointer-events-none">
+        <p className="text-xs text-foreground/90 font-medium truncate tracking-wide">{gen.prompt || '无提示词'}</p>
+        <p className="text-[9px] text-foreground/45 mt-1 font-light">{formatDate(gen.createdAt)}</p>
       </div>
     </div>
   );

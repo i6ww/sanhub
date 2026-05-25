@@ -90,28 +90,31 @@ export function Sidebar({ user }: SidebarProps) {
               key={item.href}
               href={item.href}
               className={cn(
-                'group flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 border border-transparent',
+                'group relative flex items-center gap-3 pl-4 pr-3 py-3 rounded-xl transition-all duration-300 border border-transparent',
                 isActive
-                  ? 'bg-accent/80 text-foreground border-border/70'
-                  : 'hover:bg-card/70 text-foreground/70'
+                  ? 'bg-gradient-to-r from-sky-500/10 to-indigo-500/5 text-foreground border-border/80 shadow-[0_4px_12px_rgba(0,0,0,0.15)] backdrop-blur-md'
+                  : 'hover:bg-card/50 text-foreground/70 hover:text-foreground'
               )}
             >
+              {isActive && (
+                <div className="absolute left-0 top-3 bottom-3 w-1 rounded-r-md bg-gradient-to-b from-sky-400 to-indigo-500 shadow-[0_0_8px_rgba(56,189,248,0.6)]" />
+              )}
               <div className={cn(
-                'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
-                isActive ? 'bg-foreground/5' : 'bg-card/60 group-hover:bg-card/80'
+                'w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300',
+                isActive ? 'bg-gradient-to-br from-sky-500/20 to-indigo-500/20 border border-sky-500/30' : 'bg-card/60 group-hover:bg-card/85 group-hover:border-border/80 border border-transparent'
               )}>
-                <item.icon className={cn('w-3.5 h-3.5', isActive ? 'text-foreground' : 'text-foreground/60')} />
+                <item.icon className={cn('w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110', isActive ? 'text-sky-400' : 'text-foreground/60')} />
               </div>
               <div className="flex-1">
                 <div className="flex items-center gap-2">
                   <p className={cn(
-                    'text-sm font-medium',
-                    isActive ? 'text-foreground' : 'text-foreground/80'
+                    'text-sm font-semibold tracking-wide transition-colors duration-300',
+                    isActive ? 'text-foreground' : 'text-foreground/75 group-hover:text-foreground'
                   )}>{item.label}</p>
                   {item.badge && (
                     <span className={cn(
-                      'text-[10px] px-1.5 py-0.5 rounded border border-border/60',
-                      isActive ? 'bg-foreground/10 text-foreground/70' : 'bg-card/60 text-foreground/50'
+                      'text-[9px] font-bold px-1.5 py-0.5 rounded border tracking-wider transition-all duration-300',
+                      isActive ? 'bg-sky-500/20 text-sky-300 border-sky-500/35 shadow-[0_0_8px_rgba(14,165,233,0.15)]' : 'bg-card/80 text-foreground/45 border-border/50 group-hover:text-foreground/65'
                     )}>{item.badge}</span>
                   )}
                 </div>
@@ -134,22 +137,25 @@ export function Sidebar({ user }: SidebarProps) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  'group flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 border border-transparent',
+                  'group relative flex items-center gap-3 pl-4 pr-3 py-3 rounded-xl transition-all duration-300 border border-transparent',
                   isActive
-                    ? 'bg-accent/80 text-foreground border-border/70'
-                    : 'hover:bg-card/70 text-foreground/70'
+                    ? 'bg-gradient-to-r from-sky-500/10 to-indigo-500/5 text-foreground border-border/80 shadow-[0_4px_12px_rgba(0,0,0,0.15)] backdrop-blur-md'
+                    : 'hover:bg-card/50 text-foreground/70 hover:text-foreground'
                 )}
               >
+                {isActive && (
+                  <div className="absolute left-0 top-3 bottom-3 w-1 rounded-r-md bg-gradient-to-b from-sky-400 to-indigo-500 shadow-[0_0_8px_rgba(56,189,248,0.6)]" />
+                )}
                 <div className={cn(
-                  'w-8 h-8 rounded-lg flex items-center justify-center transition-colors',
-                  isActive ? 'bg-foreground/5' : 'bg-card/60 group-hover:bg-card/80'
+                  'w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-300',
+                  isActive ? 'bg-gradient-to-br from-sky-500/20 to-indigo-500/20 border border-sky-500/30' : 'bg-card/60 group-hover:bg-card/85 group-hover:border-border/80 border border-transparent'
                 )}>
-                  <item.icon className={cn('w-3.5 h-3.5', isActive ? 'text-foreground' : 'text-foreground/60')} />
+                  <item.icon className={cn('w-3.5 h-3.5 transition-transform duration-300 group-hover:scale-110', isActive ? 'text-sky-400' : 'text-foreground/60')} />
                 </div>
                 <div>
                   <p className={cn(
-                    'text-sm font-medium',
-                    isActive ? 'text-foreground' : 'text-foreground/80'
+                    'text-sm font-semibold tracking-wide transition-colors duration-300',
+                    isActive ? 'text-foreground' : 'text-foreground/75 group-hover:text-foreground'
                   )}>{item.label}</p>
                 </div>
               </Link>

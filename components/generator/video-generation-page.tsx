@@ -958,18 +958,20 @@ export function VideoGenerationView({
 
         <div className="p-4">
           {/* 输入区域：图片上传 + 文本输入 */}
-          <div className="flex gap-4 mb-4">
+          <div className="flex flex-col sm:flex-row gap-4 mb-4">
             {/* 图片上传区 */}
             {(currentModel?.features.imageToVideo || activeExternalReference) && (
-              <ReferenceImageInput
-                images={files}
-                externalReference={activeExternalReference}
-                emptyLabel="参考图/视频帧"
-                externalBadge="已生成"
-                onAddFiles={handleAddReferenceFiles}
-                onRemoveImage={handleRemoveReferenceImage}
-                onClearExternalReference={() => setActiveExternalReference(null)}
-              />
+              <div className="flex justify-start">
+                <ReferenceImageInput
+                  images={files}
+                  externalReference={activeExternalReference}
+                  emptyLabel="参考图/视频帧"
+                  externalBadge="已生成"
+                  onAddFiles={handleAddReferenceFiles}
+                  onRemoveImage={handleRemoveReferenceImage}
+                  onClearExternalReference={() => setActiveExternalReference(null)}
+                />
+              </div>
             )}
 
             {/* 文本输入区 */}
@@ -1021,7 +1023,7 @@ export function VideoGenerationView({
           {/* 参数行：选择器 + 按钮 */}
           <div className="flex flex-wrap items-center gap-2">
             {/* 模型选择 */}
-            <div className="min-w-[160px]">
+            <div className="w-full sm:w-auto sm:min-w-[180px] flex-1">
               <CustomSelect
                 value={selectedModelId}
                 onValueChange={setSelectedModelId}
@@ -1037,7 +1039,7 @@ export function VideoGenerationView({
 
             {/* 时长选择 */}
             {currentModel && (
-              <div className="w-[100px]">
+              <div className="w-[calc(50%-0.25rem)] sm:w-[100px] flex-initial">
                 <CustomSelect
                   value={duration}
                   onValueChange={setDuration}
@@ -1052,7 +1054,7 @@ export function VideoGenerationView({
 
             {/* 比例选择 */}
             {currentModel && (
-              <div className="w-[120px]">
+              <div className="w-[calc(50%-0.25rem)] sm:w-[120px] flex-initial">
                 <CustomSelect
                   value={aspectRatio}
                   onValueChange={setAspectRatio}

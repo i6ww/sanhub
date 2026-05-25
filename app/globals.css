@@ -243,16 +243,19 @@
 
 @layer components {
   .surface {
-    @apply bg-card/80 border border-border/70 rounded-2xl shadow-[0_1px_0_0_rgba(255,255,255,0.06),0_12px_40px_rgba(0,0,0,0.35)];
+    @apply bg-card/80 border border-border/70 rounded-2xl shadow-[0_1px_0_0_rgba(255,255,255,0.06),0_12px_40px_rgba(0,0,0,0.35)] backdrop-blur-xl transition-all duration-300;
+  }
+  .surface-glow {
+    @apply bg-card/85 border border-border/80 rounded-2xl shadow-[0_1px_0_0_rgba(255,255,255,0.08),0_0_25px_rgba(14,165,233,0.1),0_20px_50px_rgba(0,0,0,0.4)] backdrop-blur-2xl transition-all duration-300;
   }
   .surface-muted {
-    @apply bg-card/60 border border-border/60 rounded-2xl;
+    @apply bg-card/60 border border-border/60 rounded-2xl transition-all duration-300;
   }
   .surface-outline {
-    @apply border border-border/70 rounded-xl bg-transparent;
+    @apply border border-border/70 rounded-xl bg-transparent transition-all duration-300;
   }
   .chip {
-    @apply inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-full border border-border/60 bg-card/60 text-foreground/70;
+    @apply inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-full border border-border/60 bg-card/60 text-foreground/70 transition-all duration-200;
   }
   .soft-text {
     @apply text-foreground/60;
@@ -260,4 +263,11 @@
   .hairline {
     @apply border border-border/50;
   }
+  .floating-dock {
+    @apply fixed bottom-5 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] max-w-md h-16 bg-card/80 border border-border/75 rounded-2xl shadow-[0_4px_30px_rgba(0,0,0,0.3),0_1px_0_rgba(255,255,255,0.08)] backdrop-blur-2xl px-6 flex justify-around items-center z-50 transition-all duration-300;
+  }
+  .btn-premium-glow {
+    @apply relative overflow-hidden transition-all duration-300 hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_20px_rgba(14,165,233,0.25)] hover:shadow-[0_0_30px_rgba(14,165,233,0.45)];
+  }
 }
+

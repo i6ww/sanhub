@@ -862,17 +862,19 @@ export function ImageGenerationPage({
           </div>
         )}
         <div className="p-4">
-          <div className="flex gap-4 mb-4">
+          <div className="flex flex-col sm:flex-row gap-4 mb-4">
             {currentModel?.features.imageToImage && (
-              <ReferenceImageInput
-                images={images}
-                externalReference={externalReference}
-                emptyLabel="参考图"
-                externalBadge="生成结果"
-                onAddFiles={handleAddReferenceFiles}
-                onRemoveImage={handleRemoveReferenceImage}
-                onClearExternalReference={onClearExternalReference}
-              />
+              <div className="flex justify-start">
+                <ReferenceImageInput
+                  images={images}
+                  externalReference={externalReference}
+                  emptyLabel="参考图"
+                  externalBadge="生成结果"
+                  onAddFiles={handleAddReferenceFiles}
+                  onRemoveImage={handleRemoveReferenceImage}
+                  onClearExternalReference={onClearExternalReference}
+                />
+              </div>
             )}
 
             <div className="flex-1 relative">
@@ -886,7 +888,7 @@ export function ImageGenerationPage({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="min-w-[160px]">
+            <div className="w-full sm:w-auto sm:min-w-[180px] flex-1">
               <CustomSelect
                 value={selectedModelId}
                 onValueChange={setSelectedModelId}
@@ -901,7 +903,7 @@ export function ImageGenerationPage({
             </div>
 
             {currentModel?.features.imageSize && currentModel.imageSizes && (
-              <div className="w-[100px]">
+              <div className="w-[calc(50%-0.25rem)] sm:w-[100px] flex-initial">
                 <CustomSelect
                   value={imageSize}
                   onValueChange={setImageSize}
@@ -915,7 +917,7 @@ export function ImageGenerationPage({
             )}
 
             {currentModel && (
-              <div className="w-[100px]">
+              <div className="w-[calc(50%-0.25rem)] sm:w-[100px] flex-initial">
                 <CustomSelect
                   value={aspectRatio}
                   onValueChange={setAspectRatio}
@@ -929,10 +931,10 @@ export function ImageGenerationPage({
             )}
 
             {currentModel && (
-              <span className="text-xs text-foreground/40">{getCurrentResolutionDisplay()}</span>
+              <span className="text-xs text-foreground/40 w-full sm:w-auto text-left pl-1 sm:pl-0">{getCurrentResolutionDisplay()}</span>
             )}
 
-            <div className="h-5 w-px bg-border/50" />
+            <div className="hidden sm:block h-5 w-px bg-border/50" />
 
             {(() => {
               if (!currentModel) return null;
