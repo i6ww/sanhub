@@ -18,7 +18,8 @@ import {
   BarChart3,
   History,
   Ticket,
-  UserPlus
+  UserPlus,
+  CreditCard
 } from 'lucide-react';
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
@@ -43,6 +44,7 @@ const navItems: NavItem[] = [
   { href: '/admin/image-channels', label: '图像渠道', icon: Image, roles: ['admin'] },
   { href: '/admin/video-channels', label: '视频渠道', icon: Video, roles: ['admin'] },
   { href: '/admin/redemption', label: '卡密管理', icon: Ticket, roles: ['admin', 'moderator'] },
+  { href: '/admin/payments', label: '支付设置', icon: CreditCard, roles: ['admin'] },
   { href: '/admin/invites', label: '邀请码', icon: UserPlus, roles: ['admin'] },
   { href: '/admin/announcement', label: '公告管理', icon: Megaphone, roles: ['admin'] },
   { href: '/admin/site', label: '网站配置', icon: Globe, roles: ['admin'] },

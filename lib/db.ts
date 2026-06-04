@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig } from '@/types';
+import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
@@ -109,6 +109,17 @@ CREATE TABLE IF NOT EXISTS system_config (
   smtp_from_email VARCHAR(255) DEFAULT '',
   smtp_secure TINYINT(1) DEFAULT 1,
   smtp_auth_login TINYINT(1) DEFAULT 1,
+  payment_enabled TINYINT(1) DEFAULT 0,
+  payment_server_base_url VARCHAR(500) DEFAULT '',
+  payment_callback_url VARCHAR(500) DEFAULT '',
+  payment_points_per_cny INT DEFAULT 100,
+  payment_methods LONGTEXT,
+  payment_amount_options LONGTEXT,
+  payment_amount_discounts LONGTEXT,
+  easypay_base_url VARCHAR(500) DEFAULT 'https://ezfpy.cn',
+  easypay_merchant_id VARCHAR(100) DEFAULT '',
+  easypay_api_key VARCHAR(500) DEFAULT '',
+  easypay_min_amount_cny INT DEFAULT 1,
   prompt_filter_enabled TINYINT(1) DEFAULT 0,
   prompt_filter_model_id VARCHAR(36) DEFAULT '',
   prompt_filter_prompt TEXT,
@@ -124,6 +135,26 @@ CREATE TABLE IF NOT EXISTS system_config (
 );
 
 -- 聊天模型表
+CREATE TABLE IF NOT EXISTS payment_orders (
+  id VARCHAR(36) PRIMARY KEY,
+  user_id VARCHAR(36) NOT NULL,
+  out_trade_no VARCHAR(64) UNIQUE NOT NULL,
+  provider_trade_no VARCHAR(100) DEFAULT '',
+  provider VARCHAR(32) DEFAULT 'easypay',
+  payment_type VARCHAR(32) NOT NULL,
+  amount_cents INT NOT NULL,
+  paid_amount_cents INT NOT NULL,
+  points INT NOT NULL,
+  status ENUM('pending', 'succeeded', 'failed') DEFAULT 'pending',
+  raw_notify LONGTEXT,
+  created_at BIGINT NOT NULL,
+  paid_at BIGINT DEFAULT 0,
+  updated_at BIGINT NOT NULL,
+  INDEX idx_payment_user_id (user_id),
+  INDEX idx_payment_status (status),
+  INDEX idx_payment_out_trade_no (out_trade_no)
+);
+
 CREATE TABLE IF NOT EXISTS chat_models (
   id VARCHAR(36) PRIMARY KEY,
   name VARCHAR(100) NOT NULL,
@@ -659,6 +690,28 @@ async function initializeDatabaseInternal(): Promise<void> {
     }
   }
 
+  const paymentConfigColumns = [
+    "payment_enabled TINYINT(1) DEFAULT 0",
+    "payment_server_base_url VARCHAR(500) DEFAULT ''",
+    "payment_callback_url VARCHAR(500) DEFAULT ''",
+    "payment_points_per_cny INT DEFAULT 100",
+    "payment_methods LONGTEXT",
+    "payment_amount_options LONGTEXT",
+    "payment_amount_discounts LONGTEXT",
+    "easypay_base_url VARCHAR(500) DEFAULT 'https://ezfpy.cn'",
+    "easypay_merchant_id VARCHAR(100) DEFAULT ''",
+    "easypay_api_key VARCHAR(500) DEFAULT ''",
+    "easypay_min_amount_cny INT DEFAULT 1",
+  ];
+
+  for (const columnDefinition of paymentConfigColumns) {
+    try {
+      await db.execute(`ALTER TABLE system_config ADD COLUMN ${columnDefinition}`);
+    } catch {
+      // Column already exists.
+    }
+  }
+
   // 更新 generations 表的 type 字段以支持 gitee-image（MySQL 需要修改 ENUM）
   if (dbType === 'mysql') {
     try {
@@ -899,6 +952,128 @@ export async function updateUserBalance(
   const user = await getUserById(id);
   if (!user) throw new Error('User not found');
   return user.balance;
+}
+
+function mapPaymentOrder(row: any): PaymentOrder {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    outTradeNo: row.out_trade_no,
+    providerTradeNo: row.provider_trade_no || undefined,
+    provider: row.provider || 'easypay',
+    paymentType: row.payment_type,
+    amountCents: Number(row.amount_cents) || 0,
+    paidAmountCents: Number(row.paid_amount_cents) || 0,
+    points: Number(row.points) || 0,
+    status: row.status || 'pending',
+    rawNotify: row.raw_notify || undefined,
+    createdAt: Number(row.created_at) || 0,
+    paidAt: Number(row.paid_at) || undefined,
+    updatedAt: Number(row.updated_at) || 0,
+  };
+}
+
+function getAffectedRows(result: unknown): number {
+  if (Array.isArray(result)) {
+    return Number((result[0] as any)?.affectedRows) || 0;
+  }
+  return Number((result as any)?.affectedRows) || 0;
+}
+
+export async function createPaymentOrder(input: {
+  userId: string;
+  paymentType: string;
+  amountCents: number;
+  paidAmountCents: number;
+  points: number;
+}): Promise<PaymentOrder> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+  const outTradeNo = `SH${now}${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+  const order: PaymentOrder = {
+    id: generateId(),
+    userId: input.userId,
+    outTradeNo,
+    provider: 'easypay',
+    paymentType: input.paymentType,
+    amountCents: input.amountCents,
+    paidAmountCents: input.paidAmountCents,
+    points: input.points,
+    status: 'pending',
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.execute(
+    `INSERT INTO payment_orders (id, user_id, out_trade_no, provider, payment_type, amount_cents, paid_amount_cents, points, status, created_at, paid_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      order.id,
+      order.userId,
+      order.outTradeNo,
+      order.provider,
+      order.paymentType,
+      order.amountCents,
+      order.paidAmountCents,
+      order.points,
+      order.status,
+      order.createdAt,
+      0,
+      order.updatedAt,
+    ]
+  );
+
+  return order;
+}
+
+export async function getPaymentOrderByOutTradeNo(
+  outTradeNo: string
+): Promise<PaymentOrder | null> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const [rows] = await db.execute(
+    'SELECT * FROM payment_orders WHERE out_trade_no = ?',
+    [outTradeNo]
+  );
+  const orders = rows as any[];
+  return orders[0] ? mapPaymentOrder(orders[0]) : null;
+}
+
+export async function completePaymentOrder(input: {
+  outTradeNo: string;
+  providerTradeNo?: string;
+  rawNotify: string;
+}): Promise<{ order: PaymentOrder; credited: boolean }> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const order = await getPaymentOrderByOutTradeNo(input.outTradeNo);
+  if (!order) {
+    throw new Error('Payment order not found');
+  }
+
+  const now = Date.now();
+  const [result] = await db.execute(
+    `UPDATE payment_orders
+     SET status = 'succeeded', provider_trade_no = ?, raw_notify = ?, paid_at = ?, updated_at = ?
+     WHERE out_trade_no = ? AND status = 'pending'`,
+    [
+      input.providerTradeNo || '',
+      input.rawNotify,
+      now,
+      now,
+      input.outTradeNo,
+    ]
+  );
+
+  const credited = getAffectedRows(result) > 0;
+  if (credited) {
+    await updateUserBalance(order.userId, order.points, 'strict');
+  }
+
+  const updatedOrder = await getPaymentOrderByOutTradeNo(input.outTradeNo);
+  return { order: updatedOrder || order, credited };
 }
 
 export async function getAllUsers(options: {
@@ -1602,6 +1777,84 @@ function resolveEmailVerificationConfig(
   };
 }
 
+function defaultPaymentConfig(): PaymentConfig {
+  return {
+    enabled: false,
+    serverBaseUrl: '',
+    callbackUrl: '',
+    pointsPerCny: 100,
+    methods: [
+      {
+        color: 'rgba(var(--semi-blue-5), 1)',
+        name: '支付宝',
+        type: 'alipay',
+      },
+    ],
+    amountOptions: [10, 20, 50, 100, 200, 500],
+    amountDiscounts: {
+      '50': 0.96,
+      '100': 0.92,
+      '200': 0.9,
+      '500': 0.85,
+    },
+    easyPay: {
+      baseUrl: 'https://ezfpy.cn',
+      merchantId: '',
+      apiKey: '',
+      minAmountCny: 1,
+    },
+  };
+}
+
+function parseJsonValue<T>(raw: unknown, fallback: T): T {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  if (typeof raw !== 'string') return raw as T;
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolvePaymentConfig(row?: Record<string, unknown>): PaymentConfig {
+  const defaults = defaultPaymentConfig();
+  if (!row) return defaults;
+
+  return {
+    enabled: Boolean(row.payment_enabled),
+    serverBaseUrl:
+      typeof row.payment_server_base_url === 'string'
+        ? row.payment_server_base_url
+        : '',
+    callbackUrl:
+      typeof row.payment_callback_url === 'string' ? row.payment_callback_url : '',
+    pointsPerCny: Math.max(
+      1,
+      Number(row.payment_points_per_cny) || defaults.pointsPerCny
+    ),
+    methods: parseJsonValue(row.payment_methods, defaults.methods),
+    amountOptions: parseJsonValue(row.payment_amount_options, defaults.amountOptions),
+    amountDiscounts: parseJsonValue(
+      row.payment_amount_discounts,
+      defaults.amountDiscounts
+    ),
+    easyPay: {
+      baseUrl:
+        typeof row.easypay_base_url === 'string'
+          ? row.easypay_base_url
+          : defaults.easyPay.baseUrl,
+      merchantId:
+        typeof row.easypay_merchant_id === 'string' ? row.easypay_merchant_id : '',
+      apiKey: typeof row.easypay_api_key === 'string' ? row.easypay_api_key : '',
+      minAmountCny: Math.max(
+        1,
+        Number(row.easypay_min_amount_cny) || defaults.easyPay.minAmountCny
+      ),
+    },
+  };
+}
+
 // ========================================
 // 系统配置操作
 // ========================================
@@ -1677,6 +1930,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
           inviterBonusPoints: 50,
         },
         emailVerification: defaultEmailVerificationConfig(),
+        payment: defaultPaymentConfig(),
         announcement: {
           title: '',
           content: '',
@@ -1771,6 +2025,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
         inviterBonusPoints: Number(row.invite_inviter_bonus) || 50,
       },
       emailVerification: resolveEmailVerificationConfig(row),
+      payment: resolvePaymentConfig(row),
       announcement: {
         title: row.announcement_title || '',
         content: row.announcement_content || '',
@@ -2020,6 +2275,56 @@ export async function updateSystemConfig(
       if (smtp.authLogin !== undefined) {
         fields.push('smtp_auth_login = ?');
         values.push(smtp.authLogin ? 1 : 0);
+      }
+    }
+  }
+  if (updates.payment) {
+    const payment = updates.payment;
+    if (payment.enabled !== undefined) {
+      fields.push('payment_enabled = ?');
+      values.push(payment.enabled ? 1 : 0);
+    }
+    if (payment.serverBaseUrl !== undefined) {
+      fields.push('payment_server_base_url = ?');
+      values.push(payment.serverBaseUrl);
+    }
+    if (payment.callbackUrl !== undefined) {
+      fields.push('payment_callback_url = ?');
+      values.push(payment.callbackUrl);
+    }
+    if (payment.pointsPerCny !== undefined) {
+      fields.push('payment_points_per_cny = ?');
+      values.push(payment.pointsPerCny);
+    }
+    if (payment.methods !== undefined) {
+      fields.push('payment_methods = ?');
+      values.push(JSON.stringify(payment.methods));
+    }
+    if (payment.amountOptions !== undefined) {
+      fields.push('payment_amount_options = ?');
+      values.push(JSON.stringify(payment.amountOptions));
+    }
+    if (payment.amountDiscounts !== undefined) {
+      fields.push('payment_amount_discounts = ?');
+      values.push(JSON.stringify(payment.amountDiscounts));
+    }
+    if (payment.easyPay) {
+      const easyPay = payment.easyPay;
+      if (easyPay.baseUrl !== undefined) {
+        fields.push('easypay_base_url = ?');
+        values.push(easyPay.baseUrl);
+      }
+      if (easyPay.merchantId !== undefined) {
+        fields.push('easypay_merchant_id = ?');
+        values.push(easyPay.merchantId);
+      }
+      if (easyPay.apiKey !== undefined) {
+        fields.push('easypay_api_key = ?');
+        values.push(easyPay.apiKey);
+      }
+      if (easyPay.minAmountCny !== undefined) {
+        fields.push('easypay_min_amount_cny = ?');
+        values.push(easyPay.minAmountCny);
       }
     }
   }

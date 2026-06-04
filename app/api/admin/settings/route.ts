@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getSystemConfig, updateSystemConfig } from '@/lib/db';
 import { syncUnusedInviteCodeBonuses } from '@/lib/db-codes';
-import type { EmailVerificationConfig, ImageBucketConfig, ImageStorageConfig } from '@/types';
+import type { EmailVerificationConfig, ImageBucketConfig, ImageStorageConfig, PaymentConfig, PaymentMethodConfig } from '@/types';
 
 function normalizePositiveInt(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -169,6 +169,81 @@ function normalizeEmailVerification(
   };
 }
 
+function parseJsonConfig<T>(value: unknown, fallback: T): T {
+  if (typeof value !== 'string') return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    throw new Error('JSON 配置格式不正确');
+  }
+}
+
+function normalizePaymentConfig(
+  value: unknown,
+  current: PaymentConfig
+): PaymentConfig {
+  if (!value || typeof value !== 'object') {
+    return current;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const rawEasyPay =
+    raw.easyPay && typeof raw.easyPay === 'object'
+      ? (raw.easyPay as Record<string, unknown>)
+      : {};
+
+  const methods = Array.isArray(raw.methods)
+    ? raw.methods
+    : parseJsonConfig<PaymentMethodConfig[] | null>(raw.methodsJson, null);
+  const amountOptions = Array.isArray(raw.amountOptions)
+    ? raw.amountOptions
+    : parseJsonConfig<number[] | null>(raw.amountOptionsJson, null);
+  const amountDiscounts =
+    raw.amountDiscounts && typeof raw.amountDiscounts === 'object'
+      ? (raw.amountDiscounts as Record<string, number>)
+      : parseJsonConfig<Record<string, number> | null>(
+          raw.amountDiscountsJson,
+          null
+        );
+
+  return {
+    enabled:
+      typeof raw.enabled === 'boolean' ? raw.enabled : current.enabled,
+    serverBaseUrl: normalizeString(raw.serverBaseUrl, current.serverBaseUrl),
+    callbackUrl: normalizeString(raw.callbackUrl, current.callbackUrl),
+    pointsPerCny: normalizePositiveInt(
+      raw.pointsPerCny,
+      current.pointsPerCny
+    ),
+    methods: (methods || current.methods)
+      .map((method) => ({
+        color: normalizeString(method?.color, 'rgba(var(--semi-blue-5), 1)'),
+        name: normalizeString(method?.name, ''),
+        type: normalizeString(method?.type, ''),
+      }))
+      .filter((method) => method.name && method.type),
+    amountOptions: (amountOptions || current.amountOptions)
+      .map((amount) => Number(amount))
+      .filter((amount) => Number.isFinite(amount) && amount > 0),
+    amountDiscounts: amountDiscounts || current.amountDiscounts,
+    easyPay: {
+      baseUrl: normalizeString(rawEasyPay.baseUrl, current.easyPay.baseUrl),
+      merchantId: normalizeString(
+        rawEasyPay.merchantId,
+        current.easyPay.merchantId
+      ),
+      apiKey:
+        typeof rawEasyPay.apiKey === 'string'
+          ? rawEasyPay.apiKey.trim()
+          : current.easyPay.apiKey,
+      minAmountCny: normalizePositiveInt(
+        rawEasyPay.minAmountCny,
+        current.easyPay.minAmountCny
+      ),
+    },
+  };
+}
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -269,6 +344,13 @@ export async function POST(request: NextRequest) {
       nextUpdates.emailVerification = normalizeEmailVerification(
         updates.emailVerification,
         current.emailVerification
+      );
+    }
+
+    if (updates.payment !== undefined) {
+      nextUpdates.payment = normalizePaymentConfig(
+        updates.payment,
+        current.payment
       );
     }
 

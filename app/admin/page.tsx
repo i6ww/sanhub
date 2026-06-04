@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useSession } from 'next-auth/react';
-import { Users, Coins, Loader2, Settings, ChevronRight, TrendingUp, Activity, Zap, BarChart3, Ticket, History } from 'lucide-react';
+import { Users, Coins, Loader2, Settings, ChevronRight, TrendingUp, Activity, Zap, BarChart3, Ticket, History, CreditCard } from 'lucide-react';
 import type { SafeUser, StatsOverview } from '@/types';
 import { formatBalance } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
@@ -132,6 +132,7 @@ export default function AdminPage() {
     { href: '/admin/redemption', label: '卡密管理', desc: '生成和管理积分卡密', icon: Ticket, color: 'from-green-500/20 to-emerald-500/20', roles: ['admin', 'moderator'] },
     { href: '/admin/generations', label: '生成记录', desc: '管理所有生成历史', icon: History, color: 'from-orange-500/20 to-amber-500/20', roles: ['admin'] },
     { href: '/admin/pricing', label: '积分定价', desc: '配置各服务消耗积分', icon: Coins, color: 'from-emerald-500/20 to-amber-500/20', roles: ['admin'] },
+    { href: '/admin/payments', label: '支付设置', desc: '配置积分充值和易支付参数', icon: CreditCard, color: 'from-blue-500/20 to-emerald-500/20', roles: ['admin'] },
     { href: '/admin/image-channels', label: '图像渠道', desc: '管理图像生成渠道和模型', icon: Settings, color: 'from-cyan-500/20 to-teal-500/20', roles: ['admin'] },
   ];
 

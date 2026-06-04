@@ -438,6 +438,49 @@ export interface EmailVerificationConfig {
   smtp: SmtpConfig;
 }
 
+export interface PaymentMethodConfig {
+  color: string;
+  name: string;
+  type: string;
+}
+
+export interface EasyPayConfig {
+  baseUrl: string;
+  merchantId: string;
+  apiKey: string;
+  minAmountCny: number;
+}
+
+export interface PaymentConfig {
+  enabled: boolean;
+  serverBaseUrl: string;
+  callbackUrl: string;
+  pointsPerCny: number;
+  methods: PaymentMethodConfig[];
+  amountOptions: number[];
+  amountDiscounts: Record<string, number>;
+  easyPay: EasyPayConfig;
+}
+
+export type PaymentOrderStatus = 'pending' | 'succeeded' | 'failed';
+
+export interface PaymentOrder {
+  id: string;
+  userId: string;
+  outTradeNo: string;
+  providerTradeNo?: string;
+  provider: 'easypay';
+  paymentType: string;
+  amountCents: number;
+  paidAmountCents: number;
+  points: number;
+  status: PaymentOrderStatus;
+  rawNotify?: string;
+  createdAt: number;
+  paidAt?: number;
+  updatedAt: number;
+}
+
 // 系统配置
 export interface SystemConfig {
   soraApiKey: string;
@@ -467,6 +510,7 @@ export interface SystemConfig {
   featureFlags: FeatureFlagsConfig;
   inviteSettings: InviteSettingsConfig;
   emailVerification: EmailVerificationConfig;
+  payment: PaymentConfig;
   // 公告配置
   announcement: AnnouncementConfig;
   // 渠道启用配置
