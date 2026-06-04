@@ -7,6 +7,7 @@ import { fetch as undiciFetch, Agent } from 'undici';
 import { getImageModelWithChannel } from './db';
 import { uploadToPicUI } from './picui';
 import { fetchWithRetry } from './http-retry';
+import { saveReferenceAsset } from './reference-assets';
 import { isTransientError } from './polling-utils';
 import {
   inferImageSizeLabel,
@@ -26,6 +27,7 @@ export interface ImageGenerateRequest {
   quality?: string;
   images?: Array<{ mimeType: string; data: string }>;
   idempotencyKey?: string;
+  publicBaseUrl?: string;
 }
 
 // Key 轮询索引
@@ -362,12 +364,19 @@ function throwMissingImage(data: unknown): never {
   throw new Error(`API 返回成功但未包含图片${diagnostic ? `（${diagnostic}）` : ''}，响应结构: ${summarizeImageResponse(data)}`);
 }
 
-function buildOpenAIImageInput(
-  images: ImageGenerateRequest['images']
-): string | string[] | undefined {
-  const refs = (images || [])
-    .map((image) => image.data)
-    .filter((data): data is string => Boolean(data));
+async function buildOpenAIImageInput(
+  images: ImageGenerateRequest['images'],
+  options: { forceUrl?: boolean; publicBaseUrl?: string } = {}
+): Promise<string | string[] | undefined> {
+  const refs: string[] = [];
+
+  for (const image of images || []) {
+    if (!image.data) continue;
+    const data = options.forceUrl
+      ? await saveReferenceAsset(image.data, options.publicBaseUrl)
+      : image.data;
+    refs.push(data);
+  }
 
   if (refs.length === 0) return undefined;
   return refs.length === 1 ? refs[0] : refs;
@@ -475,7 +484,8 @@ async function generateWithOpenAI(
   baseUrl: string,
   apiKey: string,
   target: ResolvedImageTarget,
-  channelId: string
+  channelId: string,
+  options: { referenceInputMode?: 'inline' | 'url' } = {}
 ): Promise<GenerateResult> {
   const key = getNextApiKey(apiKey, channelId);
   const url = `${baseUrl.replace(/\/$/, '')}/v1/images/generations`;
@@ -542,7 +552,10 @@ async function generateWithOpenAI(
     payload.extra_body = { google: { image_config: googleConfig } };
   }
 
-  const imageInput = buildOpenAIImageInput(request.images);
+  const imageInput = await buildOpenAIImageInput(request.images, {
+    forceUrl: options.referenceInputMode === 'url',
+    publicBaseUrl: request.publicBaseUrl,
+  });
   if (imageInput) {
     payload.image = imageInput;
   }
@@ -1359,7 +1372,8 @@ export async function generateImage(request: ImageGenerateRequest): Promise<Gene
         effectiveBaseUrl,
         effectiveApiKey,
         resolvedTarget,
-        channel.id
+        channel.id,
+        { referenceInputMode: channel.type === 'apexerapi' ? 'url' : 'inline' }
       );
       break;
 
@@ -1382,7 +1396,7 @@ export async function generateImage(request: ImageGenerateRequest): Promise<Gene
             resolvedTarget.model,
             channel.id
           )
-        : await generateWithOpenAI(
+          : await generateWithOpenAI(
             request,
             effectiveBaseUrl,
             effectiveApiKey,
