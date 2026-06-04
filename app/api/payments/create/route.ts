@@ -18,6 +18,23 @@ function normalizeBaseUrl(value: string): string {
   return value.trim().replace(/\/+$/, '');
 }
 
+function resolveNotifyUrl(callbackUrl: string, baseUrl: string): string {
+  const trimmed = callbackUrl.trim();
+  if (!trimmed) {
+    return `${baseUrl}/api/payments/notify/easypay`;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.pathname || parsed.pathname === '/') {
+      return `${normalizeBaseUrl(parsed.origin)}/api/payments/notify/easypay`;
+    }
+    return trimmed;
+  } catch {
+    return `${baseUrl}/api/payments/notify/easypay`;
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const rateLimit = checkRateLimit(request, RateLimitConfig.API, 'payment-create');
@@ -72,9 +89,7 @@ export async function POST(request: NextRequest) {
       points,
     });
     const baseUrl = normalizeBaseUrl(payment.serverBaseUrl || requestOrigin(request));
-    const notifyUrl =
-      payment.callbackUrl.trim() ||
-      `${baseUrl}/api/payments/notify/easypay`;
+    const notifyUrl = resolveNotifyUrl(payment.callbackUrl, baseUrl);
     const returnUrl = `${baseUrl}/api/payments/return/easypay`;
     const paymentUrl = buildEasyPaySubmitUrl({
       config: payment,
