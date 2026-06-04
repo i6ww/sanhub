@@ -31,8 +31,9 @@ services:
       - MYSQL_USER=${MYSQL_USER:-sanhub}
       - MYSQL_PASSWORD=${MYSQL_PASSWORD:-sanhub_password}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-sanhub}
-      - MYSQL_POOL_SIZE=${MYSQL_POOL_SIZE:-20}
+      - MYSQL_POOL_SIZE=${MYSQL_POOL_SIZE:-50}
       - MYSQL_SSL=false
+      - TRUST_PROXY=true
 
       # File media storage
       - MEDIA_FILE_STORAGE=${MEDIA_FILE_STORAGE:-true}
