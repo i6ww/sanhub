@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder } from '@/types';
+import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder, GenerationJob, GenerationQueueConfig } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
@@ -57,6 +57,29 @@ CREATE TABLE IF NOT EXISTS generations (
   INDEX idx_user_id (user_id),
   INDEX idx_created_at (created_at),
   INDEX idx_status (status)
+);
+
+CREATE TABLE IF NOT EXISTS generation_jobs (
+  id VARCHAR(36) PRIMARY KEY,
+  generation_id VARCHAR(36) UNIQUE NOT NULL,
+  user_id VARCHAR(36) NOT NULL,
+  type ENUM('image') DEFAULT 'image',
+  channel_id VARCHAR(36) NOT NULL,
+  model_id VARCHAR(36) NOT NULL,
+  payload LONGTEXT NOT NULL,
+  status ENUM('queued', 'running', 'succeeded', 'failed', 'cancelled') DEFAULT 'queued',
+  attempts INT DEFAULT 0,
+  max_attempts INT DEFAULT 2,
+  locked_by VARCHAR(100) DEFAULT '',
+  locked_until BIGINT DEFAULT 0,
+  started_at BIGINT DEFAULT 0,
+  finished_at BIGINT DEFAULT 0,
+  error_message TEXT,
+  created_at BIGINT NOT NULL,
+  updated_at BIGINT NOT NULL,
+  INDEX idx_generation_jobs_status (status),
+  INDEX idx_generation_jobs_channel (channel_id),
+  INDEX idx_generation_jobs_generation (generation_id)
 );
 
 -- 系统配置表
@@ -131,7 +154,12 @@ CREATE TABLE IF NOT EXISTS system_config (
   rate_limit_image_max_requests INT DEFAULT 30,
   rate_limit_image_window_seconds INT DEFAULT 60,
   rate_limit_video_max_requests INT DEFAULT 30,
-  rate_limit_video_window_seconds INT DEFAULT 60
+  rate_limit_video_window_seconds INT DEFAULT 60,
+  generation_queue_enabled TINYINT(1) DEFAULT 1,
+  generation_queue_image_concurrency INT DEFAULT 16,
+  generation_queue_channel_concurrency INT DEFAULT 16,
+  generation_queue_lock_timeout_seconds INT DEFAULT 900,
+  generation_queue_max_attempts INT DEFAULT 2
 );
 
 -- 聊天模型表
@@ -705,6 +733,22 @@ async function initializeDatabaseInternal(): Promise<void> {
   ];
 
   for (const columnDefinition of paymentConfigColumns) {
+    try {
+      await db.execute(`ALTER TABLE system_config ADD COLUMN ${columnDefinition}`);
+    } catch {
+      // Column already exists.
+    }
+  }
+
+  const generationQueueConfigColumns = [
+    "generation_queue_enabled TINYINT(1) DEFAULT 1",
+    "generation_queue_image_concurrency INT DEFAULT 16",
+    "generation_queue_channel_concurrency INT DEFAULT 16",
+    "generation_queue_lock_timeout_seconds INT DEFAULT 900",
+    "generation_queue_max_attempts INT DEFAULT 2",
+  ];
+
+  for (const columnDefinition of generationQueueConfigColumns) {
     try {
       await db.execute(`ALTER TABLE system_config ADD COLUMN ${columnDefinition}`);
     } catch {
@@ -1301,6 +1345,177 @@ export async function refundGenerationBalance(
   }
 }
 
+function mapGenerationJob(row: any): GenerationJob {
+  return {
+    id: row.id,
+    generationId: row.generation_id,
+    userId: row.user_id,
+    type: row.type || 'image',
+    channelId: row.channel_id,
+    modelId: row.model_id,
+    payload: parseJsonValue<Record<string, unknown>>(row.payload, {}),
+    status: row.status || 'queued',
+    attempts: Number(row.attempts) || 0,
+    maxAttempts: Number(row.max_attempts) || 1,
+    lockedBy: row.locked_by || undefined,
+    lockedUntil: Number(row.locked_until) || undefined,
+    startedAt: Number(row.started_at) || undefined,
+    finishedAt: Number(row.finished_at) || undefined,
+    errorMessage: row.error_message || undefined,
+    createdAt: Number(row.created_at) || 0,
+    updatedAt: Number(row.updated_at) || 0,
+  };
+}
+
+export async function createGenerationJob(input: {
+  generationId: string;
+  userId: string;
+  type: 'image';
+  channelId: string;
+  modelId: string;
+  payload: Record<string, unknown>;
+  maxAttempts: number;
+}): Promise<GenerationJob> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+  const job: GenerationJob = {
+    id: generateId(),
+    generationId: input.generationId,
+    userId: input.userId,
+    type: input.type,
+    channelId: input.channelId,
+    modelId: input.modelId,
+    payload: input.payload,
+    status: 'queued',
+    attempts: 0,
+    maxAttempts: Math.max(1, Number(input.maxAttempts) || 1),
+    createdAt: now,
+    updatedAt: now,
+  };
+
+  await db.execute(
+    `INSERT INTO generation_jobs (id, generation_id, user_id, type, channel_id, model_id, payload, status, attempts, max_attempts, locked_by, locked_until, started_at, finished_at, error_message, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      job.id,
+      job.generationId,
+      job.userId,
+      job.type,
+      job.channelId,
+      job.modelId,
+      JSON.stringify(job.payload),
+      job.status,
+      job.attempts,
+      job.maxAttempts,
+      '',
+      0,
+      0,
+      0,
+      null,
+      job.createdAt,
+      job.updatedAt,
+    ]
+  );
+
+  return job;
+}
+
+export async function claimGenerationJobs(
+  workerId: string,
+  limit: number,
+  lockTimeoutMs: number
+): Promise<GenerationJob[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
+  const now = Date.now();
+  const lockedUntil = now + Math.max(30_000, Number(lockTimeoutMs) || 30_000);
+  const [rows] = await db.execute(
+    `SELECT * FROM generation_jobs
+     WHERE status = 'queued' OR (status = 'running' AND locked_until < ?)
+     ORDER BY created_at ASC
+     LIMIT ${safeLimit}`,
+    [now]
+  );
+
+  const claimed: GenerationJob[] = [];
+  for (const row of rows as any[]) {
+    const [result] = await db.execute(
+      `UPDATE generation_jobs
+       SET status = 'running', attempts = attempts + 1, locked_by = ?, locked_until = ?, started_at = ?, updated_at = ?, error_message = NULL
+       WHERE id = ? AND (status = 'queued' OR (status = 'running' AND locked_until < ?))`,
+      [workerId, lockedUntil, now, now, row.id, now]
+    );
+
+    if (getAffectedRows(result) > 0) {
+      claimed.push(mapGenerationJob({
+        ...row,
+        status: 'running',
+        attempts: Number(row.attempts || 0) + 1,
+        locked_by: workerId,
+        locked_until: lockedUntil,
+        started_at: now,
+        updated_at: now,
+        error_message: null,
+      }));
+    }
+  }
+
+  return claimed;
+}
+
+export async function completeGenerationJob(jobId: string): Promise<void> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+  await db.execute(
+    `UPDATE generation_jobs
+     SET status = 'succeeded', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?
+     WHERE id = ?`,
+    [now, now, jobId]
+  );
+}
+
+export async function failGenerationJob(
+  jobId: string,
+  errorMessage: string,
+  retry: boolean
+): Promise<void> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+
+  if (retry) {
+    await db.execute(
+      `UPDATE generation_jobs
+       SET status = 'queued', locked_by = '', locked_until = 0, updated_at = ?, error_message = ?
+       WHERE id = ?`,
+      [now, errorMessage, jobId]
+    );
+    return;
+  }
+
+  await db.execute(
+    `UPDATE generation_jobs
+     SET status = 'failed', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?, error_message = ?
+     WHERE id = ?`,
+    [now, now, errorMessage, jobId]
+  );
+}
+
+export async function releaseGenerationJob(jobId: string, errorMessage: string): Promise<void> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+  await db.execute(
+    `UPDATE generation_jobs
+     SET status = 'queued', attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, locked_by = '', locked_until = 0, updated_at = ?, error_message = ?
+     WHERE id = ? AND status = 'running'`,
+    [now, errorMessage, jobId]
+  );
+}
+
 export type UserGenerationKindFilter = 'all' | 'video' | 'image';
 export type UserGenerationStatusFilter =
   | 'all'
@@ -1777,6 +1992,43 @@ function resolveEmailVerificationConfig(
   };
 }
 
+function defaultGenerationQueueConfig(): GenerationQueueConfig {
+  return {
+    enabled: true,
+    imageConcurrency: 16,
+    channelConcurrency: 16,
+    lockTimeoutSeconds: 900,
+    maxAttempts: 2,
+  };
+}
+
+function resolveGenerationQueueConfig(
+  row?: Record<string, unknown>
+): GenerationQueueConfig {
+  const defaults = defaultGenerationQueueConfig();
+  if (!row) return defaults;
+
+  return {
+    enabled: row.generation_queue_enabled !== 0,
+    imageConcurrency: Math.max(
+      1,
+      Number(row.generation_queue_image_concurrency) || defaults.imageConcurrency
+    ),
+    channelConcurrency: Math.max(
+      1,
+      Number(row.generation_queue_channel_concurrency) || defaults.channelConcurrency
+    ),
+    lockTimeoutSeconds: Math.max(
+      30,
+      Number(row.generation_queue_lock_timeout_seconds) || defaults.lockTimeoutSeconds
+    ),
+    maxAttempts: Math.max(
+      1,
+      Number(row.generation_queue_max_attempts) || defaults.maxAttempts
+    ),
+  };
+}
+
 function defaultPaymentConfig(): PaymentConfig {
   return {
     enabled: false,
@@ -1931,6 +2183,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
         },
         emailVerification: defaultEmailVerificationConfig(),
         payment: defaultPaymentConfig(),
+        generationQueue: defaultGenerationQueueConfig(),
         announcement: {
           title: '',
           content: '',
@@ -2026,6 +2279,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
       },
       emailVerification: resolveEmailVerificationConfig(row),
       payment: resolvePaymentConfig(row),
+      generationQueue: resolveGenerationQueueConfig(row),
       announcement: {
         title: row.announcement_title || '',
         content: row.announcement_content || '',
@@ -2326,6 +2580,29 @@ export async function updateSystemConfig(
         fields.push('easypay_min_amount_cny = ?');
         values.push(easyPay.minAmountCny);
       }
+    }
+  }
+  if (updates.generationQueue) {
+    const queue = updates.generationQueue;
+    if (queue.enabled !== undefined) {
+      fields.push('generation_queue_enabled = ?');
+      values.push(queue.enabled ? 1 : 0);
+    }
+    if (queue.imageConcurrency !== undefined) {
+      fields.push('generation_queue_image_concurrency = ?');
+      values.push(queue.imageConcurrency);
+    }
+    if (queue.channelConcurrency !== undefined) {
+      fields.push('generation_queue_channel_concurrency = ?');
+      values.push(queue.channelConcurrency);
+    }
+    if (queue.lockTimeoutSeconds !== undefined) {
+      fields.push('generation_queue_lock_timeout_seconds = ?');
+      values.push(queue.lockTimeoutSeconds);
+    }
+    if (queue.maxAttempts !== undefined) {
+      fields.push('generation_queue_max_attempts = ?');
+      values.push(queue.maxAttempts);
     }
   }
   if (updates.imageStorage) {

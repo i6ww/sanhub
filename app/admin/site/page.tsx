@@ -133,6 +133,7 @@ export default function SiteConfigPage() {
           videoProxyBaseUrl: config.videoProxyBaseUrl,
           rateLimit: config.rateLimit,
           promptProcessing: config.promptProcessing,
+          generationQueue: config.generationQueue,
           registerEnabled: config.registerEnabled,
           defaultBalance: config.defaultBalance,
           featureFlags: config.featureFlags,
@@ -1066,6 +1067,99 @@ export default function SiteConfigPage() {
           placeholder="视频加速域名"
           className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
         />
+        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 p-4">
+          <div>
+            <p className="text-sm text-foreground">生成队列</p>
+            <p className="mt-1 text-xs text-foreground/30">控制图片生成任务进入上游渠道前的并发数量。</p>
+          </div>
+          <Switch
+            checked={config.generationQueue.enabled}
+            onClick={() =>
+              patch((prev) => ({
+                ...prev,
+                generationQueue: {
+                  ...prev.generationQueue,
+                  enabled: !prev.generationQueue.enabled,
+                },
+              }))
+            }
+            color="bg-emerald-500"
+          />
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">全局图片并发</label>
+            <input
+              type="number"
+              min="1"
+              value={config.generationQueue.imageConcurrency}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  generationQueue: {
+                    ...prev.generationQueue,
+                    imageConcurrency: Math.max(1, Number(event.target.value) || 1),
+                  },
+                }))
+              }
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">单渠道并发</label>
+            <input
+              type="number"
+              min="1"
+              value={config.generationQueue.channelConcurrency}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  generationQueue: {
+                    ...prev.generationQueue,
+                    channelConcurrency: Math.max(1, Number(event.target.value) || 1),
+                  },
+                }))
+              }
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">锁超时秒数</label>
+            <input
+              type="number"
+              min="30"
+              value={config.generationQueue.lockTimeoutSeconds}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  generationQueue: {
+                    ...prev.generationQueue,
+                    lockTimeoutSeconds: Math.max(30, Number(event.target.value) || 30),
+                  },
+                }))
+              }
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">最大尝试次数</label>
+            <input
+              type="number"
+              min="1"
+              value={config.generationQueue.maxAttempts}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  generationQueue: {
+                    ...prev.generationQueue,
+                    maxAttempts: Math.max(1, Number(event.target.value) || 1),
+                  },
+                }))
+              }
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+            />
+          </div>
+        </div>
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <label className="text-sm text-foreground/50">图片请求上限 / 窗口秒数</label>

@@ -2,23 +2,31 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { generateImage, resolveImageTarget, type ImageGenerateRequest } from '@/lib/image-generator';
+import { resolveImageTarget, type ImageGenerateRequest } from '@/lib/image-generator';
 import {
-  saveGeneration,
-  updateUserBalance,
-  getUserById,
-  updateGeneration,
+  createGenerationJob,
+  getGenerationByClientRequestId,
   getImageModelWithChannel,
   getSystemConfig,
+  getUserById,
   refundGenerationBalance,
-  getGenerationByClientRequestId,
+  saveGeneration,
+  updateGeneration,
+  updateUserBalance,
 } from '@/lib/db';
-import { saveMediaAsync } from '@/lib/media-storage';
+import {
+  executeImageGenerationJobPayload,
+  startGenerationQueueWorker,
+  type ImageGenerationJobPayload,
+} from '@/lib/generation-queue';
 import { checkRateLimit } from '@/lib/rate-limit';
 import { fetchReferenceImage } from '@/lib/reference-image';
 import { assertPromptsAllowed, isPromptBlockedError } from '@/lib/prompt-blocklist';
 import { resolveImageSize } from '@/lib/v1-images';
-import { inferImageSizeLabel as inferNormalizedImageSizeLabel, normalizeAspectRatio } from '@/lib/image-sizing';
+import {
+  inferImageSizeLabel as inferNormalizedImageSizeLabel,
+  normalizeAspectRatio,
+} from '@/lib/image-sizing';
 import type { ChannelType, Generation, GenerationType } from '@/types';
 
 export const maxDuration = 600;
@@ -38,6 +46,7 @@ const IMAGE_TYPE_BY_CHANNEL: Record<ChannelType, GenerationType> = {
   flow2api: 'gemini-image',
   grok2api: 'gemini-image',
 };
+
 class RouteResponseError extends Error {
   constructor(public response: NextResponse) {
     super('Route response');
@@ -62,10 +71,9 @@ function throwRouteResponse(response: NextResponse): never {
 
 function firstString(...values: unknown[]): string | undefined {
   for (const value of values) {
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (trimmed) return trimmed;
-    }
+    if (typeof value !== 'string') continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
   }
   return undefined;
 }
@@ -73,11 +81,13 @@ function firstString(...values: unknown[]): string | undefined {
 function getGoogleImageConfig(body: Record<string, unknown>): Record<string, unknown> {
   const extraBody = body.extra_body;
   if (!extraBody || typeof extraBody !== 'object') return {};
+
   const google = (extraBody as Record<string, unknown>).google;
   if (!google || typeof google !== 'object') return {};
+
   const imageConfig = (google as Record<string, unknown>).image_config;
   return imageConfig && typeof imageConfig === 'object'
-    ? imageConfig as Record<string, unknown>
+    ? (imageConfig as Record<string, unknown>)
     : {};
 }
 
@@ -87,69 +97,29 @@ function isInlineImageInput(value: unknown): value is { mimeType: string; data: 
   return typeof record.data === 'string' && typeof record.mimeType === 'string';
 }
 
-// 后台处理任务
-async function processGenerationTask(
+async function runDirectGenerationTask(
   generationId: string,
   userId: string,
-  request: ImageGenerateRequest,
-  prechargedCost: number,
-  generationParams: Generation['params'],
-  publicBaseUrl?: string
+  payload: ImageGenerationJobPayload
 ) {
   try {
-    console.log(`[Task ${generationId}] 开始处理图像生成任务`);
-
-    await updateGeneration(generationId, {
-      status: 'processing',
-      params: {
-        ...generationParams,
-        progress: 10,
-      },
-    });
-
-    const result = await generateImage(request);
-
-    await updateGeneration(generationId, {
-      status: 'processing',
-      params: {
-        ...generationParams,
-        progress: 80,
-      },
-    });
-
-    // 保存到图床或本地
-    const savedUrl = await saveMediaAsync(generationId, result.url, { publicBaseUrl });
-
-    console.log(`[Task ${generationId}] 生成成功`);
-
-    await updateGeneration(generationId, {
-      status: 'completed',
-      resultUrl: savedUrl,
-      params: {
-        ...generationParams,
-        progress: 100,
-      },
-    });
-
-    console.log(`[Task ${generationId}] 任务完成`);
+    await executeImageGenerationJobPayload(generationId, payload);
   } catch (error) {
-    console.error(`[Task ${generationId}] 任务失败:`, error);
-
+    const message = error instanceof Error ? error.message : 'Generation failed';
     await updateGeneration(generationId, {
       status: 'failed',
-      errorMessage: error instanceof Error ? error.message : '生成失败',
+      errorMessage: message,
     });
-
-    try {
-      await refundGenerationBalance(generationId, userId, prechargedCost);
-    } catch (refundErr) {
-      console.error(`[Task ${generationId}] Refund failed:`, refundErr);
-    }
+    await refundGenerationBalance(generationId, userId, payload.prechargedCost).catch((refundError) => {
+      console.error(`[API] Refund failed for direct generation ${generationId}:`, refundError);
+    });
   }
 }
 
 export async function POST(request: NextRequest) {
   try {
+    startGenerationQueueWorker();
+
     const systemConfig = await getSystemConfig();
     const imageMaxRequests = Math.max(1, Number(systemConfig.rateLimit?.imageMaxRequests) || 30);
     const imageWindowSeconds = Math.max(1, Number(systemConfig.rateLimit?.imageWindowSeconds) || 60);
@@ -158,6 +128,7 @@ export async function POST(request: NextRequest) {
       { maxRequests: imageMaxRequests, windowSeconds: imageWindowSeconds },
       'generate-image'
     );
+
     if (!rateLimit.allowed) {
       return NextResponse.json(
         { error: 'Too many requests' },
@@ -167,11 +138,11 @@ export async function POST(request: NextRequest) {
 
     const session = await getServerSession(authOptions);
     if (!session?.user) {
-      return NextResponse.json({ error: '请先登录' }, { status: 401 });
+      return NextResponse.json({ error: 'Please sign in first' }, { status: 401 });
     }
 
     const body = await request.json();
-    const payload = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
     const googleImageConfig = getGoogleImageConfig(payload);
     const modelId = firstString(payload.modelId, payload.model_id);
     const prompt = firstString(payload.prompt) || '';
@@ -180,12 +151,14 @@ export async function POST(request: NextRequest) {
     const images = payload.images;
     const referenceImages = payload.referenceImages || payload.reference_images;
     const referenceImageUrl = firstString(payload.referenceImageUrl, payload.reference_image_url);
-    const aspectRatio = normalizeAspectRatio(firstString(
-      payload.aspectRatio,
-      payload.aspect_ratio,
-      googleImageConfig.aspectRatio,
-      googleImageConfig.aspect_ratio
-    ));
+    const aspectRatio = normalizeAspectRatio(
+      firstString(
+        payload.aspectRatio,
+        payload.aspect_ratio,
+        googleImageConfig.aspectRatio,
+        googleImageConfig.aspect_ratio
+      )
+    );
     const imageSize = firstString(
       payload.imageSize,
       payload.image_size,
@@ -195,7 +168,10 @@ export async function POST(request: NextRequest) {
     const clientRequestId = firstString(payload.clientRequestId, payload.client_request_id) || '';
     const resolvedInputSize = resolveImageSize(size);
     const effectiveAspectRatio = aspectRatio || resolvedInputSize.aspectRatio;
-    const effectiveImageSize = inferNormalizedImageSizeLabel(imageSize) || imageSize || inferNormalizedImageSizeLabel(size);
+    const effectiveImageSize =
+      inferNormalizedImageSizeLabel(imageSize) ||
+      imageSize ||
+      inferNormalizedImageSizeLabel(size);
     const effectiveSize = resolvedInputSize.size || size;
 
     if (clientRequestId && !CLIENT_REQUEST_ID_PATTERN.test(clientRequestId)) {
@@ -205,17 +181,17 @@ export async function POST(request: NextRequest) {
     await assertPromptsAllowed([prompt]);
 
     if (!modelId) {
-      return NextResponse.json({ error: '缺少模型 ID' }, { status: 400 });
+      return NextResponse.json({ error: 'Missing model id' }, { status: 400 });
     }
 
-    // 获取模型配置
     const modelConfig = await getImageModelWithChannel(modelId);
     if (!modelConfig) {
-      return NextResponse.json({ error: '模型不存在' }, { status: 404 });
+      return NextResponse.json({ error: 'Model not found' }, { status: 404 });
     }
+
     const { model, channel } = modelConfig;
     if (!model.enabled) {
-      return NextResponse.json({ error: '模型已禁用' }, { status: 400 });
+      return NextResponse.json({ error: 'Model is disabled' }, { status: 400 });
     }
 
     const resolvedTarget = resolveImageTarget(
@@ -225,13 +201,12 @@ export async function POST(request: NextRequest) {
       effectiveImageSize
     );
 
-    // 检查用户
     const user = await getUserById(session.user.id);
     if (!user) {
-      return NextResponse.json({ error: '用户不存在' }, { status: 401 });
+      return NextResponse.json({ error: 'User not found' }, { status: 401 });
     }
     if (user.disabled) {
-      return NextResponse.json({ error: '账号已被禁用' }, { status: 403 });
+      return NextResponse.json({ error: 'Account is disabled' }, { status: 403 });
     }
 
     const creationKey = clientRequestId ? `${user.id}:${clientRequestId}` : '';
@@ -239,11 +214,9 @@ export async function POST(request: NextRequest) {
     if (pendingCreation) {
       try {
         const generation = await pendingCreation;
-        return buildTaskResponse(generation, '任务已存在，已复用当前任务');
+        return buildTaskResponse(generation, 'Task already exists; reused current task');
       } catch (error) {
-        if (error instanceof RouteResponseError) {
-          return error.response;
-        }
+        if (error instanceof RouteResponseError) return error.response;
         throw error;
       }
     }
@@ -251,7 +224,7 @@ export async function POST(request: NextRequest) {
     if (clientRequestId) {
       const existingGeneration = await getGenerationByClientRequestId(user.id, clientRequestId);
       if (existingGeneration) {
-        return buildTaskResponse(existingGeneration, '任务已存在，已复用当前任务');
+        return buildTaskResponse(existingGeneration, 'Task already exists; reused current task');
       }
     }
 
@@ -261,27 +234,23 @@ export async function POST(request: NextRequest) {
     if (pendingCreationAfterLookup) {
       try {
         const generation = await pendingCreationAfterLookup;
-        return buildTaskResponse(generation, '任务已存在，已复用当前任务');
+        return buildTaskResponse(generation, 'Task already exists; reused current task');
       } catch (error) {
-        if (error instanceof RouteResponseError) {
-          return error.response;
-        }
+        if (error instanceof RouteResponseError) return error.response;
         throw error;
       }
     }
 
     const createTask = async (): Promise<Generation> => {
-      // 检查余额
       if (user.balance < model.costPerGeneration) {
         throwRouteResponse(
           NextResponse.json(
-            { error: `余额不足，需要至少 ${model.costPerGeneration} 积分` },
+            { error: `Insufficient balance; at least ${model.costPerGeneration} points required` },
             { status: 402 }
           )
         );
       }
 
-      // 处理参考图
       const origin = new URL(request.url).origin;
       const imageList: Array<{ mimeType: string; data: string }> = [];
 
@@ -308,44 +277,46 @@ export async function POST(request: NextRequest) {
       if (Array.isArray(referenceImages)) {
         for (const img of referenceImages) {
           if (typeof img !== 'string') continue;
+
           if (img.startsWith('data:')) {
             const match = img.match(/^data:([^;]+);base64,(.+)$/);
             if (match) {
               imageList.push({ mimeType: match[1], data: img });
             }
-          } else {
-            const referenceImage = await fetchReferenceImage(img, {
-              origin,
-              userId: session.user.id,
-              userRole: session.user.role,
-              maxBytes: MAX_REFERENCE_IMAGE_BYTES,
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-              },
-            });
-            imageList.push({
-              mimeType: referenceImage.mimeType,
-              data: referenceImage.dataUrl,
-            });
+            continue;
           }
+
+          const referenceImage = await fetchReferenceImage(img, {
+            origin,
+            userId: session.user.id,
+            userRole: session.user.role,
+            maxBytes: MAX_REFERENCE_IMAGE_BYTES,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+          });
+          imageList.push({
+            mimeType: referenceImage.mimeType,
+            data: referenceImage.dataUrl,
+          });
         }
       }
 
-      // 验证必须参考图
       if (model.requiresReferenceImage && imageList.length === 0) {
         throwRouteResponse(
-          NextResponse.json({ error: '该模型需要上传参考图' }, { status: 400 })
+          NextResponse.json({ error: 'This model requires a reference image' }, { status: 400 })
         );
       }
 
-      // 验证提示词
       if (!model.allowEmptyPrompt && !prompt && imageList.length === 0) {
         throwRouteResponse(
-          NextResponse.json({ error: '请输入提示词或上传参考图' }, { status: 400 })
+          NextResponse.json(
+            { error: 'Please enter a prompt or upload a reference image' },
+            { status: 400 }
+          )
         );
       }
 
-      // 构建请求
       const generateRequest: ImageGenerateRequest = {
         modelId,
         prompt: prompt || '',
@@ -358,21 +329,19 @@ export async function POST(request: NextRequest) {
 
       try {
         await updateUserBalance(user.id, -model.costPerGeneration, 'strict');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Insufficient balance';
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Insufficient balance';
         if (message.includes('Insufficient balance')) {
           throwRouteResponse(
             NextResponse.json(
-              { error: `余额不足，需要至少 ${model.costPerGeneration} 积分` },
+              { error: `Insufficient balance; at least ${model.costPerGeneration} points required` },
               { status: 402 }
             )
           );
         }
-        throw err;
+        throw error;
       }
 
-      // 保存生成记录
-      let generation: Generation;
       const generationParams: Generation['params'] = {
         model: model.apiModel,
         modelId,
@@ -385,6 +354,7 @@ export async function POST(request: NextRequest) {
         clientRequestId: clientRequestId || undefined,
       };
 
+      let generation: Generation;
       try {
         generation = await saveGeneration({
           userId: user.id,
@@ -397,34 +367,57 @@ export async function POST(request: NextRequest) {
           balancePrecharged: true,
           balanceRefunded: false,
         });
-      } catch (saveErr) {
-        await updateUserBalance(user.id, model.costPerGeneration, 'strict').catch(refundErr => {
-          console.error('[API] Precharge rollback failed:', refundErr);
+      } catch (error) {
+        await updateUserBalance(user.id, model.costPerGeneration, 'strict').catch((refundError) => {
+          console.error('[API] Precharge rollback failed:', refundError);
         });
-        throw saveErr;
+        throw error;
       }
 
-      console.log('[API] 图像生成任务已创建:', {
+      const queuedRequest: ImageGenerateRequest = {
+        ...generateRequest,
+        idempotencyKey: `sanhub-image-${clientRequestId || generation.id}`,
+      };
+      const queuePayload: ImageGenerationJobPayload = {
+        request: queuedRequest,
+        prechargedCost: model.costPerGeneration,
+        generationParams,
+        publicBaseUrl: origin,
+      };
+
+      if (systemConfig.generationQueue.enabled) {
+        try {
+          await createGenerationJob({
+            generationId: generation.id,
+            userId: user.id,
+            type: 'image',
+            channelId: channel.id,
+            modelId,
+            payload: queuePayload as unknown as Record<string, unknown>,
+            maxAttempts: systemConfig.generationQueue.maxAttempts,
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to enqueue generation task';
+          await updateGeneration(generation.id, {
+            status: 'failed',
+            errorMessage: message,
+          }).catch(() => {});
+          await refundGenerationBalance(generation.id, user.id, model.costPerGeneration).catch((refundError) => {
+            console.error('[API] Enqueue rollback refund failed:', refundError);
+          });
+          throw error;
+        }
+      } else {
+        void runDirectGenerationTask(generation.id, user.id, queuePayload);
+      }
+
+      console.log('[API] Image generation task created', {
         id: generation.id,
         modelId,
         model: model.apiModel,
         resolvedModel: resolvedTarget.model,
         resolvedSize: resolvedTarget.size,
-      });
-
-      // 后台处理
-      processGenerationTask(
-        generation.id,
-        user.id,
-        {
-          ...generateRequest,
-          idempotencyKey: `sanhub-image-${clientRequestId || generation.id}`,
-        },
-        model.costPerGeneration,
-        generationParams,
-        origin
-      ).catch((err) => {
-        console.error('[API] 后台任务启动失败:', err);
+        queued: systemConfig.generationQueue.enabled,
       });
 
       return generation;
@@ -437,11 +430,9 @@ export async function POST(request: NextRequest) {
 
     try {
       const generation = await creationPromise;
-      return buildTaskResponse(generation, '任务已创建，正在后台处理中');
+      return buildTaskResponse(generation, 'Task created and queued for background processing');
     } catch (error) {
-      if (error instanceof RouteResponseError) {
-        return error.response;
-      }
+      if (error instanceof RouteResponseError) return error.response;
       throw error;
     } finally {
       if (creationKey && imageTaskCreationPromises.get(creationKey) === creationPromise) {
@@ -459,7 +450,7 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : '生成失败' },
+      { error: error instanceof Error ? error.message : 'Generation failed' },
       { status: 500 }
     );
   }

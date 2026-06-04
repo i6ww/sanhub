@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getGeneration } from '@/lib/db';
+import { startGenerationQueueWorker } from '@/lib/generation-queue';
 
 export const dynamic = 'force-dynamic';
 
@@ -28,6 +29,8 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    startGenerationQueueWorker();
+
     // 验证登录
     const session = await getServerSession(authOptions);
     if (!session?.user) {

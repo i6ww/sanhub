@@ -419,6 +419,14 @@ export interface GenerateRateLimitConfig {
   videoWindowSeconds: number;
 }
 
+export interface GenerationQueueConfig {
+  enabled: boolean;
+  imageConcurrency: number;
+  channelConcurrency: number;
+  lockTimeoutSeconds: number;
+  maxAttempts: number;
+}
+
 export interface SmtpConfig {
   host: string;
   port: number;
@@ -481,6 +489,33 @@ export interface PaymentOrder {
   updatedAt: number;
 }
 
+export type GenerationJobStatus =
+  | 'queued'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled';
+
+export interface GenerationJob {
+  id: string;
+  generationId: string;
+  userId: string;
+  type: 'image';
+  channelId: string;
+  modelId: string;
+  payload: Record<string, unknown>;
+  status: GenerationJobStatus;
+  attempts: number;
+  maxAttempts: number;
+  lockedBy?: string;
+  lockedUntil?: number;
+  startedAt?: number;
+  finishedAt?: number;
+  errorMessage?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // 系统配置
 export interface SystemConfig {
   soraApiKey: string;
@@ -525,6 +560,7 @@ export interface SystemConfig {
   promptProcessing: PromptProcessingConfig;
   // Generate API rate limit configuration
   rateLimit: GenerateRateLimitConfig;
+  generationQueue: GenerationQueueConfig;
 }
 
 // 定价配置

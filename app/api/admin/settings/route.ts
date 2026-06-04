@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getSystemConfig, updateSystemConfig } from '@/lib/db';
 import { syncUnusedInviteCodeBonuses } from '@/lib/db-codes';
-import type { EmailVerificationConfig, ImageBucketConfig, ImageStorageConfig, PaymentConfig, PaymentMethodConfig } from '@/types';
+import type { EmailVerificationConfig, GenerationQueueConfig, ImageBucketConfig, ImageStorageConfig, PaymentConfig, PaymentMethodConfig } from '@/types';
 
 function normalizePositiveInt(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -244,6 +244,37 @@ function normalizePaymentConfig(
   };
 }
 
+function normalizeGenerationQueueConfig(
+  value: unknown,
+  current: GenerationQueueConfig
+): GenerationQueueConfig {
+  if (!value || typeof value !== 'object') {
+    return current;
+  }
+
+  const raw = value as Record<string, unknown>;
+  return {
+    enabled:
+      typeof raw.enabled === 'boolean' ? raw.enabled : current.enabled,
+    imageConcurrency: normalizePositiveInt(
+      raw.imageConcurrency,
+      current.imageConcurrency
+    ),
+    channelConcurrency: normalizePositiveInt(
+      raw.channelConcurrency,
+      current.channelConcurrency
+    ),
+    lockTimeoutSeconds: Math.max(
+      30,
+      normalizePositiveInt(
+        raw.lockTimeoutSeconds,
+        current.lockTimeoutSeconds
+      )
+    ),
+    maxAttempts: normalizePositiveInt(raw.maxAttempts, current.maxAttempts),
+  };
+}
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -351,6 +382,13 @@ export async function POST(request: NextRequest) {
       nextUpdates.payment = normalizePaymentConfig(
         updates.payment,
         current.payment
+      );
+    }
+
+    if (updates.generationQueue !== undefined) {
+      nextUpdates.generationQueue = normalizeGenerationQueueConfig(
+        updates.generationQueue,
+        current.generationQueue
       );
     }
 
