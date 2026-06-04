@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createUser, getSystemConfig } from '@/lib/db';
+import {
+  normalizeEmail,
+  validateEmailPolicy,
+  verifyEmailCode,
+} from '@/lib/email-verification';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
@@ -12,9 +17,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, email, password } = await request.json();
+    const { name, email, password, emailCode } = await request.json();
+    const normalizedEmail = normalizeEmail(email);
 
-    if (!name || !email || !password) {
+    if (!name || !normalizedEmail || !password) {
       return NextResponse.json(
         { error: '请填写所有必填字段' },
         { status: 400 }
@@ -37,8 +43,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const emailPolicy = validateEmailPolicy(
+      normalizedEmail,
+      config.emailVerification
+    );
+    if (!emailPolicy.ok) {
+      return NextResponse.json(
+        { error: emailPolicy.error },
+        { status: 400 }
+      );
+    }
+
+    if (
+      config.emailVerification.enabled &&
+      !verifyEmailCode(normalizedEmail, emailCode)
+    ) {
+      return NextResponse.json(
+        { error: '邮箱验证码错误或已过期' },
+        { status: 400 }
+      );
+    }
+
     // 创建用户
-    const user = await createUser(email, password, name);
+    const user = await createUser(normalizedEmail, password, name);
 
     return NextResponse.json({
       success: true,

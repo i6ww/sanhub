@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Loader2, ArrowRight, Gift, Sparkles } from 'lucide-react';
+import { Loader2, ArrowRight, Gift, Sparkles, Mail } from 'lucide-react';
 import { Captcha } from '@/components/ui/captcha';
 import { AnimatedBackground } from '@/components/ui/animated-background';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
@@ -17,6 +17,9 @@ export default function RegisterPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [emailCode, setEmailCode] = useState('');
+  const [sendingEmailCode, setSendingEmailCode] = useState(false);
+  const [emailCodeCooldown, setEmailCodeCooldown] = useState(0);
   const [captchaId, setCaptchaId] = useState('');
   const [captchaCode, setCaptchaCode] = useState('');
   const [error, setError] = useState('');
@@ -32,10 +35,49 @@ export default function RegisterPage() {
     }
   }, [status, session, router]);
 
+  useEffect(() => {
+    if (emailCodeCooldown <= 0) return;
+
+    const timer = window.setTimeout(() => {
+      setEmailCodeCooldown((seconds) => Math.max(0, seconds - 1));
+    }, 1000);
+
+    return () => window.clearTimeout(timer);
+  }, [emailCodeCooldown]);
+
   const handleCaptchaChange = useCallback((id: string, code: string) => {
     setCaptchaId(id);
     setCaptchaCode(code);
   }, []);
+
+  const handleSendEmailCode = async () => {
+    setError('');
+
+    if (!email) {
+      setError('请先输入邮箱');
+      return;
+    }
+
+    setSendingEmailCode(true);
+    try {
+      const res = await fetch('/api/auth/email-code', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || '验证码发送失败');
+      }
+
+      setEmailCodeCooldown(60);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '验证码发送失败');
+    } finally {
+      setSendingEmailCode(false);
+    }
+  };
 
   // 如果正在检查登录状态，显示加载中
   if (status === 'loading') {
@@ -69,6 +111,11 @@ export default function RegisterPage() {
       return;
     }
 
+    if (siteConfig.emailVerificationEnabled && !emailCode) {
+      setError('请输入邮箱验证码');
+      return;
+    }
+
     // 验证码检查
     if (!captchaCode || captchaCode.length !== 4) {
       setError('请输入4位验证码');
@@ -95,7 +142,7 @@ export default function RegisterPage() {
       const res = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, email, password }),
+        body: JSON.stringify({ name, email, password, emailCode }),
       });
 
       const data = await res.json();
@@ -162,6 +209,35 @@ export default function RegisterPage() {
                 className="w-full px-4 py-3 bg-input/70 border border-border/70 rounded-lg text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 transition-colors text-sm"
               />
             </div>
+            {siteConfig.emailVerificationEnabled && (
+              <div className="space-y-1.5">
+                <label className="text-xs text-foreground/50 uppercase tracking-wider">邮箱验证码</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="6 位验证码"
+                    value={emailCode}
+                    onChange={(e) => setEmailCode(e.target.value)}
+                    required
+                    className="min-w-0 flex-1 px-4 py-3 bg-input/70 border border-border/70 rounded-lg text-foreground placeholder:text-muted-foreground/60 focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 transition-colors text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSendEmailCode}
+                    disabled={sendingEmailCode || emailCodeCooldown > 0}
+                    className="flex h-[46px] min-w-[112px] items-center justify-center gap-2 rounded-lg border border-border/70 bg-card/70 px-3 text-sm text-foreground transition-colors hover:bg-card disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {sendingEmailCode ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Mail className="h-4 w-4" />
+                    )}
+                    <span>{emailCodeCooldown > 0 ? `${emailCodeCooldown}s` : '发送'}</span>
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="space-y-1.5">
               <label className="text-xs text-foreground/50 uppercase tracking-wider">密码</label>
               <input

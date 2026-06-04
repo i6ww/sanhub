@@ -13,6 +13,7 @@ export interface ExtendedSiteConfig extends SiteConfig {
   inviteRewardEnabled: boolean;
   inviteeBonusPoints: number;
   inviterBonusPoints: number;
+  emailVerificationEnabled: boolean;
 }
 
 const defaultSiteConfig: ExtendedSiteConfig = {
@@ -31,6 +32,7 @@ const defaultSiteConfig: ExtendedSiteConfig = {
   inviteRewardEnabled: true,
   inviteeBonusPoints: 100,
   inviterBonusPoints: 50,
+  emailVerificationEnabled: false,
 };
 
 interface SiteConfigContextType {
@@ -76,6 +78,7 @@ export function SiteConfigProvider({ children, initialConfig }: SiteConfigProvid
           inviteRewardEnabled: data.data.inviteRewardEnabled ?? true,
           inviteeBonusPoints: data.data.inviteeBonusPoints ?? 100,
           inviterBonusPoints: data.data.inviterBonusPoints ?? 50,
+          emailVerificationEnabled: data.data.emailVerificationEnabled ?? false,
         });
       }
     } catch (error) {

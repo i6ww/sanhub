@@ -7,6 +7,7 @@ import {
   Globe,
   LayoutGrid,
   Loader2,
+  Mail,
   Plus,
   Save,
   Shield,
@@ -136,6 +137,7 @@ export default function SiteConfigPage() {
           defaultBalance: config.defaultBalance,
           featureFlags: config.featureFlags,
           inviteSettings: config.inviteSettings,
+          emailVerification: config.emailVerification,
           imageStorage: config.imageStorage,
         }),
       });
@@ -437,6 +439,251 @@ export default function SiteConfigPage() {
           </div>
         </div>
       </Card>
+      <Card icon={Mail} title="邮箱验证">
+        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 p-4">
+          <div>
+            <p className="text-sm text-foreground">注册邮箱验证码</p>
+            <p className="mt-1 text-xs text-foreground/30">开启后，新用户注册时必须先接收并填写邮箱验证码。</p>
+          </div>
+          <Switch
+            checked={config.emailVerification.enabled}
+            onClick={() =>
+              patch((prev) => ({
+                ...prev,
+                emailVerification: {
+                  ...prev.emailVerification,
+                  enabled: !prev.emailVerification.enabled,
+                },
+              }))
+            }
+            color="bg-emerald-500"
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 p-4">
+          <div>
+            <p className="text-sm text-foreground">启用邮箱域名白名单</p>
+            <p className="mt-1 text-xs text-foreground/30">只允许白名单内的邮箱域名注册。</p>
+          </div>
+          <Switch
+            checked={config.emailVerification.domainWhitelistEnabled}
+            onClick={() =>
+              patch((prev) => ({
+                ...prev,
+                emailVerification: {
+                  ...prev.emailVerification,
+                  domainWhitelistEnabled: !prev.emailVerification.domainWhitelistEnabled,
+                },
+              }))
+            }
+            color="bg-sky-500"
+          />
+        </div>
+
+        <textarea
+          value={config.emailVerification.allowedDomains}
+          onChange={(event) =>
+            patch((prev) => ({
+              ...prev,
+              emailVerification: {
+                ...prev.emailVerification,
+                allowedDomains: event.target.value,
+              },
+            }))
+          }
+          placeholder="gmail.com, outlook.com, yahoo.com"
+          rows={3}
+          className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+        />
+
+        <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 p-4">
+          <div>
+            <p className="text-sm text-foreground">启用邮箱别名限制</p>
+            <p className="mt-1 text-xs text-foreground/30">禁止使用带 + 号的邮箱别名注册。</p>
+          </div>
+          <Switch
+            checked={config.emailVerification.aliasRestrictionEnabled}
+            onClick={() =>
+              patch((prev) => ({
+                ...prev,
+                emailVerification: {
+                  ...prev.emailVerification,
+                  aliasRestrictionEnabled: !prev.emailVerification.aliasRestrictionEnabled,
+                },
+              }))
+            }
+            color="bg-amber-500"
+          />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">SMTP 服务器</label>
+            <input
+              value={config.emailVerification.smtp.host}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  emailVerification: {
+                    ...prev.emailVerification,
+                    smtp: {
+                      ...prev.emailVerification.smtp,
+                      host: event.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="smtp.gmail.com"
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">SMTP 端口</label>
+            <input
+              type="number"
+              min="1"
+              value={config.emailVerification.smtp.port}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  emailVerification: {
+                    ...prev.emailVerification,
+                    smtp: {
+                      ...prev.emailVerification.smtp,
+                      port: Math.max(1, Number(event.target.value) || 1),
+                    },
+                  },
+                }))
+              }
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">SMTP 账号</label>
+            <input
+              value={config.emailVerification.smtp.username}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  emailVerification: {
+                    ...prev.emailVerification,
+                    smtp: {
+                      ...prev.emailVerification.smtp,
+                      username: event.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="account@gmail.com"
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">发件邮箱</label>
+            <input
+              value={config.emailVerification.smtp.fromEmail}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  emailVerification: {
+                    ...prev.emailVerification,
+                    smtp: {
+                      ...prev.emailVerification.smtp,
+                      fromEmail: event.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="account@gmail.com"
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2 sm:col-span-2">
+            <label className="text-sm text-foreground/50">授权码 / 应用密码</label>
+            <input
+              type="password"
+              value={config.emailVerification.smtp.password}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  emailVerification: {
+                    ...prev.emailVerification,
+                    smtp: {
+                      ...prev.emailVerification.smtp,
+                      password: event.target.value,
+                    },
+                  },
+                }))
+              }
+              placeholder="Gmail app password"
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-sm text-foreground/50">验证码有效期（分钟）</label>
+            <input
+              type="number"
+              min="1"
+              value={config.emailVerification.codeExpiresMinutes}
+              onChange={(event) =>
+                patch((prev) => ({
+                  ...prev,
+                  emailVerification: {
+                    ...prev.emailVerification,
+                    codeExpiresMinutes: Math.max(1, Number(event.target.value) || 1),
+                  },
+                }))
+              }
+              className="w-full rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+            />
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 p-4">
+              <div>
+                <p className="text-sm text-foreground">SSL</p>
+              </div>
+              <Switch
+                checked={config.emailVerification.smtp.secure}
+                onClick={() =>
+                  patch((prev) => ({
+                    ...prev,
+                    emailVerification: {
+                      ...prev.emailVerification,
+                      smtp: {
+                        ...prev.emailVerification.smtp,
+                        secure: !prev.emailVerification.smtp.secure,
+                      },
+                    },
+                  }))
+                }
+                color="bg-emerald-500"
+              />
+            </div>
+            <div className="flex items-center justify-between rounded-xl border border-border/70 bg-card/50 p-4">
+              <div>
+                <p className="text-sm text-foreground">AUTH LOGIN</p>
+              </div>
+              <Switch
+                checked={config.emailVerification.smtp.authLogin}
+                onClick={() =>
+                  patch((prev) => ({
+                    ...prev,
+                    emailVerification: {
+                      ...prev.emailVerification,
+                      smtp: {
+                        ...prev.emailVerification.smtp,
+                        authLogin: !prev.emailVerification.smtp.authLogin,
+                      },
+                    },
+                  }))
+                }
+                color="bg-indigo-500"
+              />
+            </div>
+          </div>
+        </div>
+      </Card>
+
       <Card icon={Database} title="图床桶">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <select

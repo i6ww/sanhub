@@ -419,6 +419,25 @@ export interface GenerateRateLimitConfig {
   videoWindowSeconds: number;
 }
 
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  fromEmail: string;
+  secure: boolean;
+  authLogin: boolean;
+}
+
+export interface EmailVerificationConfig {
+  enabled: boolean;
+  domainWhitelistEnabled: boolean;
+  allowedDomains: string;
+  aliasRestrictionEnabled: boolean;
+  codeExpiresMinutes: number;
+  smtp: SmtpConfig;
+}
+
 // 系统配置
 export interface SystemConfig {
   soraApiKey: string;
@@ -447,6 +466,7 @@ export interface SystemConfig {
   defaultBalance: number;
   featureFlags: FeatureFlagsConfig;
   inviteSettings: InviteSettingsConfig;
+  emailVerification: EmailVerificationConfig;
   // 公告配置
   announcement: AnnouncementConfig;
   // 渠道启用配置

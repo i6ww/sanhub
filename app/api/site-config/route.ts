@@ -22,6 +22,7 @@ export async function GET() {
         inviteRewardEnabled: config.inviteSettings.rewardEnabled,
         inviteeBonusPoints: config.inviteSettings.inviteeBonusPoints,
         inviterBonusPoints: config.inviteSettings.inviterBonusPoints,
+        emailVerificationEnabled: config.emailVerification.enabled,
       },
     });
   } catch (error) {

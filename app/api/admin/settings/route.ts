@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getSystemConfig, updateSystemConfig } from '@/lib/db';
 import { syncUnusedInviteCodeBonuses } from '@/lib/db-codes';
-import type { ImageBucketConfig, ImageStorageConfig } from '@/types';
+import type { EmailVerificationConfig, ImageBucketConfig, ImageStorageConfig } from '@/types';
 
 function normalizePositiveInt(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -114,6 +114,61 @@ function normalizeImageStorage(
   };
 }
 
+function normalizeString(value: unknown, fallback = ''): string {
+  return typeof value === 'string' ? value.trim() : fallback;
+}
+
+function normalizeEmailVerification(
+  value: unknown,
+  current: EmailVerificationConfig
+): EmailVerificationConfig {
+  if (!value || typeof value !== 'object') {
+    return current;
+  }
+
+  const raw = value as Record<string, unknown>;
+  const rawSmtp =
+    raw.smtp && typeof raw.smtp === 'object'
+      ? (raw.smtp as Record<string, unknown>)
+      : {};
+
+  return {
+    enabled:
+      typeof raw.enabled === 'boolean' ? raw.enabled : current.enabled,
+    domainWhitelistEnabled:
+      typeof raw.domainWhitelistEnabled === 'boolean'
+        ? raw.domainWhitelistEnabled
+        : current.domainWhitelistEnabled,
+    allowedDomains: normalizeString(raw.allowedDomains, current.allowedDomains),
+    aliasRestrictionEnabled:
+      typeof raw.aliasRestrictionEnabled === 'boolean'
+        ? raw.aliasRestrictionEnabled
+        : current.aliasRestrictionEnabled,
+    codeExpiresMinutes: normalizePositiveInt(
+      raw.codeExpiresMinutes,
+      current.codeExpiresMinutes
+    ),
+    smtp: {
+      host: normalizeString(rawSmtp.host, current.smtp.host),
+      port: normalizePositiveInt(rawSmtp.port, current.smtp.port),
+      username: normalizeString(rawSmtp.username, current.smtp.username),
+      password:
+        typeof rawSmtp.password === 'string'
+          ? rawSmtp.password
+          : current.smtp.password,
+      fromEmail: normalizeString(rawSmtp.fromEmail, current.smtp.fromEmail),
+      secure:
+        typeof rawSmtp.secure === 'boolean'
+          ? rawSmtp.secure
+          : current.smtp.secure,
+      authLogin:
+        typeof rawSmtp.authLogin === 'boolean'
+          ? rawSmtp.authLogin
+          : current.smtp.authLogin,
+    },
+  };
+}
+
 export async function GET() {
   try {
     const session = await getServerSession(authOptions);
@@ -207,6 +262,13 @@ export async function POST(request: NextRequest) {
       nextUpdates.imageStorage = normalizeImageStorage(
         updates.imageStorage,
         current.imageStorage
+      );
+    }
+
+    if (updates.emailVerification !== undefined) {
+      nextUpdates.emailVerification = normalizeEmailVerification(
+        updates.emailVerification,
+        current.emailVerification
       );
     }
 

@@ -22,5 +22,6 @@ export async function getPublicSiteConfig(): Promise<ExtendedSiteConfig> {
     inviteRewardEnabled: config.inviteSettings?.rewardEnabled ?? true,
     inviteeBonusPoints: config.inviteSettings?.inviteeBonusPoints ?? 100,
     inviterBonusPoints: config.inviteSettings?.inviterBonusPoints ?? 50,
+    emailVerificationEnabled: config.emailVerification?.enabled ?? false,
   };
 }

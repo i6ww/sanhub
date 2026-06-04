@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig } from '@/types';
+import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
@@ -97,6 +97,18 @@ CREATE TABLE IF NOT EXISTS system_config (
   pricing_chat INT DEFAULT 1,
   register_enabled TINYINT(1) DEFAULT 1,
   default_balance INT DEFAULT 100,
+  email_verification_enabled TINYINT(1) DEFAULT 0,
+  email_domain_whitelist_enabled TINYINT(1) DEFAULT 0,
+  email_allowed_domains TEXT,
+  email_alias_restriction_enabled TINYINT(1) DEFAULT 0,
+  email_code_expires_minutes INT DEFAULT 10,
+  smtp_host VARCHAR(200) DEFAULT '',
+  smtp_port INT DEFAULT 465,
+  smtp_username VARCHAR(255) DEFAULT '',
+  smtp_password VARCHAR(500) DEFAULT '',
+  smtp_from_email VARCHAR(255) DEFAULT '',
+  smtp_secure TINYINT(1) DEFAULT 1,
+  smtp_auth_login TINYINT(1) DEFAULT 1,
   prompt_filter_enabled TINYINT(1) DEFAULT 0,
   prompt_filter_model_id VARCHAR(36) DEFAULT '',
   prompt_filter_prompt TEXT,
@@ -622,6 +634,29 @@ async function initializeDatabaseInternal(): Promise<void> {
     await db.execute("ALTER TABLE system_config ADD COLUMN rate_limit_video_window_seconds INT DEFAULT 60");
   } catch {
     // 字段已存在，忽略错误
+  }
+
+  const emailConfigColumns = [
+    "email_verification_enabled TINYINT(1) DEFAULT 0",
+    "email_domain_whitelist_enabled TINYINT(1) DEFAULT 0",
+    "email_allowed_domains TEXT",
+    "email_alias_restriction_enabled TINYINT(1) DEFAULT 0",
+    "email_code_expires_minutes INT DEFAULT 10",
+    "smtp_host VARCHAR(200) DEFAULT ''",
+    "smtp_port INT DEFAULT 465",
+    "smtp_username VARCHAR(255) DEFAULT ''",
+    "smtp_password VARCHAR(500) DEFAULT ''",
+    "smtp_from_email VARCHAR(255) DEFAULT ''",
+    "smtp_secure TINYINT(1) DEFAULT 1",
+    "smtp_auth_login TINYINT(1) DEFAULT 1",
+  ];
+
+  for (const columnDefinition of emailConfigColumns) {
+    try {
+      await db.execute(`ALTER TABLE system_config ADD COLUMN ${columnDefinition}`);
+    } catch {
+      // Column already exists.
+    }
   }
 
   // 更新 generations 表的 type 字段以支持 gitee-image（MySQL 需要修改 ENUM）
@@ -1520,6 +1555,53 @@ function resolveImageStorageConfig(row?: Record<string, unknown>): ImageStorageC
   };
 }
 
+function defaultEmailVerificationConfig(): EmailVerificationConfig {
+  return {
+    enabled: false,
+    domainWhitelistEnabled: false,
+    allowedDomains: '',
+    aliasRestrictionEnabled: false,
+    codeExpiresMinutes: 10,
+    smtp: {
+      host: '',
+      port: 465,
+      username: '',
+      password: '',
+      fromEmail: '',
+      secure: true,
+      authLogin: true,
+    },
+  };
+}
+
+function resolveEmailVerificationConfig(
+  row?: Record<string, unknown>
+): EmailVerificationConfig {
+  const defaults = defaultEmailVerificationConfig();
+  if (!row) return defaults;
+
+  return {
+    enabled: Boolean(row.email_verification_enabled),
+    domainWhitelistEnabled: Boolean(row.email_domain_whitelist_enabled),
+    allowedDomains:
+      typeof row.email_allowed_domains === 'string' ? row.email_allowed_domains : '',
+    aliasRestrictionEnabled: Boolean(row.email_alias_restriction_enabled),
+    codeExpiresMinutes: Math.max(
+      1,
+      Number(row.email_code_expires_minutes) || defaults.codeExpiresMinutes
+    ),
+    smtp: {
+      host: typeof row.smtp_host === 'string' ? row.smtp_host : '',
+      port: Math.max(1, Number(row.smtp_port) || defaults.smtp.port),
+      username: typeof row.smtp_username === 'string' ? row.smtp_username : '',
+      password: typeof row.smtp_password === 'string' ? row.smtp_password : '',
+      fromEmail: typeof row.smtp_from_email === 'string' ? row.smtp_from_email : '',
+      secure: row.smtp_secure !== 0,
+      authLogin: row.smtp_auth_login !== 0,
+    },
+  };
+}
+
 // ========================================
 // 系统配置操作
 // ========================================
@@ -1594,6 +1676,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
           inviteeBonusPoints: 100,
           inviterBonusPoints: 50,
         },
+        emailVerification: defaultEmailVerificationConfig(),
         announcement: {
           title: '',
           content: '',
@@ -1687,6 +1770,7 @@ export async function getSystemConfig(): Promise<SystemConfig> {
         inviteeBonusPoints: Number(row.invite_invitee_bonus) || 100,
         inviterBonusPoints: Number(row.invite_inviter_bonus) || 50,
       },
+      emailVerification: resolveEmailVerificationConfig(row),
       announcement: {
         title: row.announcement_title || '',
         content: row.announcement_content || '',
@@ -1883,6 +1967,60 @@ export async function updateSystemConfig(
     if (inviteSettings.inviterBonusPoints !== undefined) {
       fields.push('invite_inviter_bonus = ?');
       values.push(inviteSettings.inviterBonusPoints);
+    }
+  }
+  if (updates.emailVerification) {
+    const emailVerification = updates.emailVerification;
+    if (emailVerification.enabled !== undefined) {
+      fields.push('email_verification_enabled = ?');
+      values.push(emailVerification.enabled ? 1 : 0);
+    }
+    if (emailVerification.domainWhitelistEnabled !== undefined) {
+      fields.push('email_domain_whitelist_enabled = ?');
+      values.push(emailVerification.domainWhitelistEnabled ? 1 : 0);
+    }
+    if (emailVerification.allowedDomains !== undefined) {
+      fields.push('email_allowed_domains = ?');
+      values.push(emailVerification.allowedDomains);
+    }
+    if (emailVerification.aliasRestrictionEnabled !== undefined) {
+      fields.push('email_alias_restriction_enabled = ?');
+      values.push(emailVerification.aliasRestrictionEnabled ? 1 : 0);
+    }
+    if (emailVerification.codeExpiresMinutes !== undefined) {
+      fields.push('email_code_expires_minutes = ?');
+      values.push(emailVerification.codeExpiresMinutes);
+    }
+    if (emailVerification.smtp) {
+      const smtp = emailVerification.smtp;
+      if (smtp.host !== undefined) {
+        fields.push('smtp_host = ?');
+        values.push(smtp.host);
+      }
+      if (smtp.port !== undefined) {
+        fields.push('smtp_port = ?');
+        values.push(smtp.port);
+      }
+      if (smtp.username !== undefined) {
+        fields.push('smtp_username = ?');
+        values.push(smtp.username);
+      }
+      if (smtp.password !== undefined) {
+        fields.push('smtp_password = ?');
+        values.push(smtp.password);
+      }
+      if (smtp.fromEmail !== undefined) {
+        fields.push('smtp_from_email = ?');
+        values.push(smtp.fromEmail);
+      }
+      if (smtp.secure !== undefined) {
+        fields.push('smtp_secure = ?');
+        values.push(smtp.secure ? 1 : 0);
+      }
+      if (smtp.authLogin !== undefined) {
+        fields.push('smtp_auth_login = ?');
+        values.push(smtp.authLogin ? 1 : 0);
+      }
     }
   }
   if (updates.imageStorage) {
