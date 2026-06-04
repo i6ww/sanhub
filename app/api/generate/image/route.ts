@@ -107,7 +107,7 @@ async function processGenerationTask(
       },
     });
 
-    const result = await generateImage({ ...request, publicBaseUrl });
+    const result = await generateImage(request);
 
     await updateGeneration(generationId, {
       status: 'processing',
