@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { LogOut, History, Shield, LayoutGrid, Sparkles, User } from 'lucide-react';
+import { LogOut, History, Shield, LayoutGrid, Sparkles, User, Workflow } from 'lucide-react';
 import type { SafeUser } from '@/types';
 import { cn } from '@/lib/utils';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 
 interface HeaderProps {
   user: SafeUser;
@@ -14,8 +15,9 @@ interface HeaderProps {
 
 // 移动端底部导航项
 const mobileNavItems = [
-  { href: '/square', icon: LayoutGrid, label: '广场' },
   { href: '/create', icon: Sparkles, label: '创作' },
+  { href: '/workspace', icon: Workflow, label: '工作流' },
+  { href: '/square', icon: LayoutGrid, label: '广场' },
   { href: '/history', icon: History, label: '历史' },
   { href: '/settings', icon: User, label: '我的' },
 ];
@@ -43,6 +45,8 @@ export function Header({ user }: HeaderProps) {
 
           {/* Right Actions */}
           <div className="flex items-center gap-2">
+            <ThemeToggle />
+
             {/* Admin Link */}
             {isAdmin && (
               <Link 

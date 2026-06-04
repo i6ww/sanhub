@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Script from 'next/script';
 import './globals.css';
 import { Providers } from '@/components/providers';
 import { getPublicSiteConfig } from '@/lib/site-config';
@@ -27,6 +28,19 @@ export default async function RootLayout({
   
   return (
     <html lang="zh-CN" suppressHydrationWarning>
+      <head>
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`
+            try {
+              var theme = localStorage.getItem('sanhub-theme') || 'system';
+              var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+              var resolved = theme === 'system' ? (prefersDark ? 'dark' : 'light') : theme;
+              document.documentElement.classList.toggle('dark', resolved === 'dark');
+              document.documentElement.dataset.theme = resolved;
+            } catch (error) {}
+          `}
+        </Script>
+      </head>
       <body className="antialiased">
         <Providers initialSiteConfig={initialSiteConfig}>{children}</Providers>
       </body>

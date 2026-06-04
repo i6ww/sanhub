@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AnimatedBackground } from '@/components/ui/animated-background';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 import { getPublicSiteConfig } from '@/lib/site-config';
 
 export default async function LandingPage() {
@@ -11,6 +12,9 @@ export default async function LandingPage() {
     <div className="min-h-screen text-foreground relative flex flex-col overflow-hidden">
       {/* Animated background */}
       <AnimatedBackground variant="home" />
+      <div className="fixed right-4 top-4 z-20">
+        <ThemeToggle />
+      </div>
       
       {/* Main Content - Split viewport layout */}
       <main className="flex-1 flex items-center px-6 sm:px-12 md:px-20 lg:px-32 relative z-10 py-12 md:py-20">

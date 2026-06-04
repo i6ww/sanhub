@@ -91,7 +91,7 @@
 **零配置，一行命令启动：**
 
 ```bash
-git clone https://github.com/genz27/sanhub.git && cd sanhub && docker-compose up -d
+git clone https://github.com/i6ww/sanhub.git && cd sanhub && docker compose up -d
 ```
 
 启动后访问 http://localhost:3000
@@ -110,6 +110,33 @@ docker-compose logs -f    # 查看日志
 docker-compose down       # 停止服务
 docker-compose up -d --build  # 重新构建
 ```
+
+**Ubuntu 服务器 Docker + MySQL 部署：**
+
+```bash
+git clone https://github.com/i6ww/sanhub.git
+cd sanhub
+
+cat > .env <<'EOF'
+APP_PORT=3000
+NEXTAUTH_URL=http://your-server-ip:3000
+NEXTAUTH_SECRET=replace-with-a-random-32-byte-secret
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=replace-with-a-strong-password
+
+MYSQL_DATABASE=sanhub
+MYSQL_USER=sanhub
+MYSQL_PASSWORD=replace-with-a-strong-mysql-password
+MYSQL_ROOT_PASSWORD=replace-with-a-strong-root-password
+MYSQL_POOL_SIZE=20
+MEDIA_FILE_STORAGE=true
+EOF
+
+docker compose up -d --build
+docker compose logs -f sanhub
+```
+
+Docker 部署默认使用 MySQL 8.4，应用容器会通过 `MYSQL_HOST=mysql` 连接 compose 内的数据库服务。
 
 **生产环境部署（使用自定义域名）：**
 
@@ -130,7 +157,7 @@ environment:
 
 ```bash
 # 1. 克隆项目
-git clone https://github.com/genz27/sanhub.git
+git clone https://github.com/i6ww/sanhub.git
 cd sanhub
 
 # 2. 安装依赖

@@ -7,27 +7,59 @@ services:
       dockerfile: Dockerfile
     container_name: sanhub
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     ports:
-      - "3000:3000"
+      - "${APP_PORT:-3000}:3000"
     environment:
       - NODE_ENV=production
-      # NEXTAUTH_SECRET 和 NEXTAUTH_URL 会自动生成，无需手动配置
-      # 如需自定义，取消注释以下行：
-      # - NEXTAUTH_URL=https://your-domain.com
-      # - NEXTAUTH_SECRET=your-secret-key-here
-      
-      # 管理员账号（首次启动自动创建，可在管理后台修改密码）
-      # 默认: admin@sanhub.local / sanhub123
-      # - ADMIN_EMAIL=admin@example.com
-      # - ADMIN_PASSWORD=your-password
-      
-      # API Keys（可选，也可在管理后台 /admin/api 配置）
-      # - SORA_API_KEY=
-      # - GEMINI_API_KEY=
-      # - ZIMAGE_API_KEY=
-      # - GITEE_API_KEY=
+      - UNDICI_NO_BODY_TIMEOUT=1
+
+      # Auth
+      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+
+      # Admin account created on first boot
+      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@sanhub.local}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-sanhub123}
+
+      # MySQL is the default Docker database.
+      - DB_TYPE=mysql
+      - MYSQL_HOST=mysql
+      - MYSQL_PORT=3306
+      - MYSQL_USER=${MYSQL_USER:-sanhub}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-sanhub_password}
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-sanhub}
+      - MYSQL_POOL_SIZE=${MYSQL_POOL_SIZE:-20}
+      - MYSQL_SSL=false
+
+      # File media storage
+      - MEDIA_FILE_STORAGE=${MEDIA_FILE_STORAGE:-true}
     volumes:
       - sanhub_data:/app/data
 
+  mysql:
+    image: mysql:8.4
+    container_name: sanhub-mysql
+    restart: unless-stopped
+    environment:
+      - MYSQL_DATABASE=${MYSQL_DATABASE:-sanhub}
+      - MYSQL_USER=${MYSQL_USER:-sanhub}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-sanhub_password}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-sanhub_root_password}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - sanhub_mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
 volumes:
   sanhub_data:
+  sanhub_mysql:

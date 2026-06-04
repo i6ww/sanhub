@@ -68,6 +68,17 @@ COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlit
 COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
 COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 
+# Copy mysql2 because the database adapter loads it dynamically.
+COPY --from=builder /app/node_modules/mysql2 ./node_modules/mysql2
+COPY --from=builder /app/node_modules/aws-ssl-profiles ./node_modules/aws-ssl-profiles
+COPY --from=builder /app/node_modules/denque ./node_modules/denque
+COPY --from=builder /app/node_modules/generate-function ./node_modules/generate-function
+COPY --from=builder /app/node_modules/iconv-lite ./node_modules/iconv-lite
+COPY --from=builder /app/node_modules/long ./node_modules/long
+COPY --from=builder /app/node_modules/lru.min ./node_modules/lru.min
+COPY --from=builder /app/node_modules/named-placeholders ./node_modules/named-placeholders
+COPY --from=builder /app/node_modules/sql-escaper ./node_modules/sql-escaper
+
 # 复制 entrypoint 脚本
 COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

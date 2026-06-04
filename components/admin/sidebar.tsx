@@ -23,6 +23,7 @@ import {
 import { useState } from 'react';
 import { cn } from '@/lib/utils';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
+import { ThemeToggle } from '@/components/ui/theme-toggle';
 import type { UserRole } from '@/types';
 
 interface NavItem {
@@ -108,8 +109,9 @@ export function AdminSidebar() {
 
       {/* Footer */}
       <div className="p-4 border-t border-border/70">
-        <div className="px-4 py-3 rounded-xl bg-card/60 border border-border/70">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-xl bg-card/60 border border-border/70">
           <p className="text-xs text-foreground/50 text-center">v1.0.0</p>
+          <ThemeToggle className="h-8 w-8" />
         </div>
       </div>
     </>

@@ -224,14 +224,23 @@ export class SQLiteAdapter implements DatabaseAdapter {
       } else {
         const stmt = this.db.prepare(sql);
         const result = safeParams.length ? stmt.run(...safeParams) : stmt.run();
-        return [[], { affectedRows: result.changes, insertId: result.lastInsertRowid }];
+        return [{ affectedRows: result.changes, insertId: result.lastInsertRowid }, {}];
       }
     } catch (error) {
-      console.error('[SQLite] SQL execution error:', error);
-      console.error('[SQLite] SQL:', sql);
-      console.error('[SQLite] Params:', safeParams);
+      if (this.shouldLogSQLiteError(error)) {
+        console.error('[SQLite] SQL execution error:', error);
+        console.error('[SQLite] SQL:', sql);
+        console.error('[SQLite] Params:', safeParams);
+      }
       throw error;
     }
+  }
+
+  private shouldLogSQLiteError(error: any): boolean {
+    if (error?.code !== 'SQLITE_ERROR') return true;
+
+    const message = typeof error?.message === 'string' ? error.message : '';
+    return !message.includes('duplicate column name:');
   }
 
   private convertSQLToSQLite(sql: string): string {
