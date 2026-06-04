@@ -223,8 +223,11 @@ export class SQLiteAdapter implements DatabaseAdapter {
         return [rows, {}];
       } else {
         const stmt = this.db.prepare(sql);
-        const result = safeParams.length ? stmt.run(...safeParams) : stmt.run();
-        return [{ affectedRows: result.changes, insertId: result.lastInsertRowid }, {}];
+        const result = (safeParams.length ? stmt.run(...safeParams) : stmt.run()) as {
+          changes: number;
+          lastInsertRowid: number | bigint;
+        };
+        return [[{ affectedRows: result.changes, insertId: result.lastInsertRowid }], {}];
       }
     } catch (error) {
       if (this.shouldLogSQLiteError(error)) {
