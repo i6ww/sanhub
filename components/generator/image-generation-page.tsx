@@ -21,6 +21,7 @@ import { InlineToggle } from '@/components/generator/inline-toggle';
 import { ReferenceImageInput } from '@/components/generator/reference-image-input';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
 import { CustomSelect } from '@/components/ui/select-custom';
+import { GenerationErrorAlert } from '@/components/generator/generation-error-alert';
 import {
   buildTaskFromGeneration,
   deleteGenerationRecord,
@@ -38,6 +39,7 @@ import {
   replaceActiveTasks,
   type ReusableImageReference,
 } from '@/lib/generation-client';
+import { getGenerationErrorCopy } from '@/lib/polling-utils';
 
 const ResultGallery = dynamic(
   () => import('@/components/generator/result-gallery').then((mod) => mod.ResultGallery),
@@ -270,10 +272,12 @@ export function ImageGenerationPage({
       }
 
       if (hasOversizedImage) {
-        setError('图片大小不能超过 15MB');
+        const imageSizeError = 'Image size must be <= 15MB';
+        const copy = getGenerationErrorCopy(imageSizeError);
+        setError(imageSizeError);
         toast({
-          title: '图片过大',
-          description: '图片大小不能超过 15MB',
+          title: copy.title,
+          description: `${copy.reason} ${copy.suggestion}`,
           variant: 'destructive',
         });
       }
@@ -716,7 +720,7 @@ export function ImageGenerationPage({
         onClearExternalReference?.();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
+      setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       submissionLockRef.current = false;
       setSubmitting(false);
@@ -773,7 +777,7 @@ export function ImageGenerationPage({
         onClearExternalReference?.();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '生成失败');
+      setError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       submissionLockRef.current = false;
       setSubmitting(false);
@@ -980,10 +984,7 @@ export function ImageGenerationPage({
               />
 
               {error && (
-                <div className="flex items-center gap-1.5 text-xs text-red-400">
-                  <AlertCircle className="w-3 h-3" />
-                  <span>{error}</span>
-                </div>
+                <GenerationErrorAlert error={error} compact className="max-w-xl" />
               )}
             </div>
 

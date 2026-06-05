@@ -17,6 +17,7 @@ import {
 import type { Generation } from '@/types';
 import { formatDate } from '@/lib/utils';
 import { toast } from '@/components/ui/toaster';
+import { getGenerationErrorCopy } from '@/lib/polling-utils';
 
 // 任务类型
 export interface Task {
@@ -247,7 +248,7 @@ const GenerationResultCard = memo(function GenerationResultCard({
   );
 });
 
-export function ResultGallery({
+export function ResultGallery({ 
   generations,
   tasks = [],
   onRemoveTask,
@@ -259,6 +260,9 @@ export function ResultGallery({
 }: ResultGalleryProps) {
   const [selected, setSelected] = useState<Generation | null>(null);
   const [selectedFailedTask, setSelectedFailedTask] = useState<Task | null>(null);
+  const selectedFailedTaskError = selectedFailedTask
+    ? getGenerationErrorCopy(selectedFailedTask.errorMessage || 'Generation failed')
+    : null;
   const canReuse = (gen: Generation) => isReusableGeneration(gen, onReuseGeneration);
   const isTaskVideo = (task: Task) => task.type?.includes('video') || task.model?.includes('video');
   const handleSelectGeneration = useCallback((generation: Generation) => {
@@ -424,7 +428,7 @@ export function ResultGallery({
                   }`}
                   onClick={() => task.errorMessage && setSelectedFailedTask(task)}
                 >
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-500/10">
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-red-500/10 px-4 text-center">
                     <AlertCircle className="w-8 h-8 text-red-300 mb-2" />
                     <p className="text-xs text-red-300">
                       {task.status === 'cancelled' ? '已取消' : '生成失败'}
@@ -432,7 +436,7 @@ export function ResultGallery({
                     {task.errorMessage && (
                       <>
                         <p className="text-xs text-red-300/70 mt-1 px-4 text-center truncate max-w-full">
-                          {task.errorMessage}
+                          {getGenerationErrorCopy(task.errorMessage).reason}
                         </p>
                         <p className="text-[10px] text-red-300/50 mt-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           点击查看详情
@@ -699,7 +703,7 @@ export function ResultGallery({
               </div>
               <div>
                 <h2 id="error-modal-title" className="text-lg font-medium text-foreground">
-                  {selectedFailedTask.status === 'cancelled' ? '任务已取消' : '生成失败'}
+                  {selectedFailedTask.status === 'cancelled' ? '任务已取消' : selectedFailedTaskError?.title}
                 </h2>
                 <p className="text-xs text-foreground/40">
                   {formatDate(selectedFailedTask.createdAt)}
@@ -709,13 +713,24 @@ export function ResultGallery({
 
             <div className="space-y-3">
               <div>
-                <p className="text-xs text-foreground/50 mb-1">错误详情</p>
+                <p className="text-xs text-foreground/50 mb-1">失败原因</p>
                 <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-lg">
                   <p className="text-sm text-red-300 whitespace-pre-wrap break-words">
-                    {selectedFailedTask.errorMessage}
+                    {selectedFailedTaskError?.reason}
                   </p>
                 </div>
               </div>
+
+              {selectedFailedTaskError?.suggestion && (
+                <div>
+                  <p className="text-xs text-foreground/50 mb-1">建议做法</p>
+                  <div className="p-3 bg-card/60 border border-border/70 rounded-lg">
+                    <p className="text-sm text-foreground/75 whitespace-pre-wrap break-words">
+                      {selectedFailedTaskError.suggestion}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {selectedFailedTask.prompt && (
                 <div>

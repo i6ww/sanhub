@@ -19,6 +19,7 @@ import {
 import type { Generation, SafeImageModel } from '@/types';
 import { toast } from '@/components/ui/toaster';
 import { CustomSelect } from '@/components/ui/select-custom';
+import { GenerationErrorAlert } from '@/components/generator/generation-error-alert';
 import { cn, formatBalance } from '@/lib/utils';
 import { compressImageToWebP, fileToBase64 } from '@/lib/image-compression';
 import {
@@ -479,7 +480,7 @@ export function BatchImageGenerationPage() {
           } catch (err) {
             updateTask(task.id, {
               status: 'failed',
-              error: err instanceof Error ? err.message : '\u751f\u6210\u4efb\u52a1\u5931\u8d25',
+              error: err instanceof Error ? err.message : 'Generation failed',
               progress: 0,
             });
           }
@@ -558,9 +559,7 @@ export function BatchImageGenerationPage() {
       </div>
 
       {error && (
-        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-          {error}
-        </div>
+        <GenerationErrorAlert error={error} />
       )}
 
       <section className="surface overflow-hidden">
@@ -854,7 +853,7 @@ function TaskCard({
       />
 
       {task.error && (
-        <p className="mt-2 line-clamp-2 text-xs text-red-300">{task.error}</p>
+        <GenerationErrorAlert error={task.error} compact className="mt-3" />
       )}
 
       {task.resultUrl && (
