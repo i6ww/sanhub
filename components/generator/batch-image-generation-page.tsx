@@ -12,7 +12,6 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Sparkles,
   Trash2,
   Upload,
   X,
@@ -588,51 +587,53 @@ export function BatchImageGenerationPage() {
   }));
 
   return (
-    <div className="mx-auto max-w-7xl space-y-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-300">
-            <Images className="h-3.5 w-3.5" />
-            {'\u6279\u91cf\u521b\u4f5c'}
-          </div>
-          <h1 className="mt-3 text-3xl font-light text-foreground">{'\u6279\u91cf\u751f\u56fe'}</h1>
-          <p className="mt-1 text-sm text-foreground/50">
-            {'\u4e00\u6b21\u51c6\u5907\u591a\u4e2a\u63d0\u793a\u8bcd\u6216\u53c2\u8003\u56fe\uff0c\u6309\u961f\u5217\u6279\u91cf\u63d0\u4ea4\u751f\u6210'}
-          </p>
-          <p className="mt-1 text-xs text-foreground/40">
-            {`\u5f53\u524d ${tasks.length} / ${MAX_BATCH_TASKS} \u4e2a\u4efb\u52a1`}
-          </p>
-        </div>
-        <div className="grid grid-cols-3 gap-3 rounded-2xl border border-border/70 bg-card/50 p-3 text-center">
-          <div>
-            <p className="text-lg font-semibold text-foreground">{runnableTasks.length}</p>
-            <p className="text-xs text-foreground/45">{'\u53ef\u63d0\u4ea4'}</p>
-          </div>
-          <div>
-            <p className="text-lg font-semibold text-sky-300">{runningCount}</p>
-            <p className="text-xs text-foreground/45">{'\u8fdb\u884c\u4e2d'}</p>
-          </div>
-          <div>
-            <p className="text-lg font-semibold text-emerald-300">{formatBalance(totalCost)}</p>
-            <p className="text-xs text-foreground/45">{'\u5df2\u6d88\u8017'}</p>
-          </div>
-        </div>
-      </div>
-
-      {error && (
-        <GenerationErrorAlert error={error} />
-      )}
-
+    <div className="mx-auto max-w-[1500px] space-y-4">
       <section className="surface overflow-hidden">
-        <div className="border-b border-border/70 p-5">
-          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-            <Sparkles className="h-4 w-4 text-sky-300" />
-            {'\u7edf\u4e00\u8bbe\u7f6e'}
+        <div className="flex flex-col gap-4 border-b border-border/70 p-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-300">
+                <Images className="h-3.5 w-3.5" />
+                {'\u6279\u91cf\u521b\u4f5c'}
+              </div>
+              <h1 className="text-2xl font-light text-foreground">{'\u6279\u91cf\u751f\u56fe'}</h1>
+              <span className="rounded-full border border-border/70 bg-card/50 px-2.5 py-1 text-xs text-foreground/45">
+                {`${tasks.length} / ${MAX_BATCH_TASKS} \u4e2a\u4efb\u52a1`}
+              </span>
+            </div>
+            <p className="mt-2 text-sm text-foreground/50">
+              {'\u4e00\u6b21\u51c6\u5907\u591a\u4e2a\u63d0\u793a\u8bcd\u6216\u53c2\u8003\u56fe\uff0c\u6309\u961f\u5217\u6279\u91cf\u63d0\u4ea4\u751f\u6210'}
+            </p>
+          </div>
+          <div className="grid w-full grid-cols-3 gap-2 rounded-xl border border-border/70 bg-card/45 p-2 text-center sm:w-auto sm:min-w-[300px]">
+            <div className="rounded-lg bg-background/25 px-3 py-2">
+              <p className="text-base font-semibold text-foreground">{runnableTasks.length}</p>
+              <p className="text-[11px] text-foreground/45">{'\u53ef\u63d0\u4ea4'}</p>
+            </div>
+            <div className="rounded-lg bg-background/25 px-3 py-2">
+              <p className="text-base font-semibold text-sky-300">{runningCount}</p>
+              <p className="text-[11px] text-foreground/45">{'\u8fdb\u884c\u4e2d'}</p>
+            </div>
+            <div className="rounded-lg bg-background/25 px-3 py-2">
+              <p className="text-base font-semibold text-emerald-300">{formatBalance(totalCost)}</p>
+              <p className="text-[11px] text-foreground/45">{'\u5df2\u6d88\u8017'}</p>
+            </div>
           </div>
         </div>
-        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(220px,1.4fr)_minmax(160px,0.8fr)_minmax(160px,0.8fr)_auto] lg:items-end">
-          <div className="space-y-2">
-            <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u6a21\u578b'}</label>
+
+        <div className="grid gap-3 p-4 lg:grid-cols-[minmax(240px,1.25fr)_minmax(150px,0.7fr)_minmax(150px,0.7fr)_auto] lg:items-end">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u6a21\u578b'}</label>
+              <button
+                type="button"
+                onClick={applyModelToAllTasks}
+                disabled={!selectedModelId}
+                className="text-xs text-sky-300 transition hover:text-sky-200 disabled:cursor-not-allowed disabled:text-foreground/30"
+              >
+                {'\u5e94\u7528\u5230\u5168\u90e8'}
+              </button>
+            </div>
             <CustomSelect
               value={selectedModelId}
               onValueChange={handleModelChange}
@@ -640,20 +641,12 @@ export function BatchImageGenerationPage() {
               disabled={modelsLoading}
               placeholder={modelsLoading ? 'Loading...' : '\u9009\u62e9\u6a21\u578b'}
             />
-            <button
-              type="button"
-              onClick={applyModelToAllTasks}
-              disabled={!selectedModelId}
-              className="text-xs text-sky-300 transition hover:text-sky-200 disabled:cursor-not-allowed disabled:text-foreground/30"
-            >
-              {'\u5e94\u7528\u6a21\u578b\u5230\u5168\u90e8\u4efb\u52a1'}
-            </button>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u753b\u9762\u6bd4\u4f8b'}</label>
             <CustomSelect value={aspectRatio} onValueChange={setAspectRatio} options={aspectOptions} />
           </div>
-          <div className="space-y-2">
+          <div className="space-y-1.5">
             <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u5206\u8fa8\u7387'}</label>
             <CustomSelect
               value={imageSize}
@@ -667,10 +660,10 @@ export function BatchImageGenerationPage() {
             onClick={() => void submitTasks(tasks)}
             disabled={submittingAll || runnableTasks.length === 0}
             className={cn(
-              'inline-flex h-9 items-center justify-center gap-2 rounded-lg px-5 text-sm font-medium transition-all',
+              'inline-flex h-10 items-center justify-center gap-2 rounded-xl px-6 text-sm font-medium transition-all',
               submittingAll || runnableTasks.length === 0
                 ? 'cursor-not-allowed bg-card/60 text-foreground/40'
-                : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white hover:opacity-90'
+                : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white shadow-sm hover:opacity-90'
             )}
           >
             {submittingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
@@ -679,8 +672,12 @@ export function BatchImageGenerationPage() {
         </div>
       </section>
 
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {error && (
+        <GenerationErrorAlert error={error} />
+      )}
+
+      <section className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="grid auto-rows-min gap-3 md:grid-cols-2 2xl:grid-cols-3">
           {tasks.map((task, index) => (
             <TaskCard
               key={task.id}
@@ -707,7 +704,7 @@ export function BatchImageGenerationPage() {
             onClick={addTask}
             disabled={tasks.length >= MAX_BATCH_TASKS}
             className={cn(
-              'min-h-[260px] rounded-2xl border border-dashed border-border/80 bg-card/30 text-foreground/45 transition',
+              'min-h-[220px] rounded-xl border border-dashed border-border/80 bg-card/30 text-foreground/45 transition',
               tasks.length >= MAX_BATCH_TASKS
                 ? 'cursor-not-allowed opacity-50'
                 : 'hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300'
@@ -720,7 +717,7 @@ export function BatchImageGenerationPage() {
           </button>
         </div>
 
-        <aside className="space-y-4">
+        <aside className="space-y-3 lg:sticky lg:top-4">
           <div className="surface overflow-hidden">
             <div className="border-b border-border/70 p-4">
               <h2 className="text-sm font-medium text-foreground">{'\u6279\u91cf\u5bfc\u5165'}</h2>
@@ -730,14 +727,14 @@ export function BatchImageGenerationPage() {
               <textarea
                 value={promptImport}
                 onChange={(event) => setPromptImport(event.target.value)}
-                rows={8}
+                rows={6}
                 placeholder={'\u672a\u6765\u57ce\u5e02\u591c\u666f\n\u4e2d\u5f0f\u8282\u65e5\u6d77\u62a5\n\u4ea7\u54c1\u6444\u5f71\uff0c\u767d\u8272\u80cc\u666f'}
-                className="w-full resize-none rounded-xl border border-border/70 bg-input/70 px-3 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
+                className="w-full resize-none rounded-lg border border-border/70 bg-input/70 px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
               />
               <button
                 type="button"
                 onClick={applyPromptImport}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border/70 bg-card/60 px-4 py-2.5 text-sm text-foreground transition hover:bg-card/80"
+                className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-border/70 bg-card/60 px-4 py-2.5 text-sm text-foreground transition hover:bg-card/80"
               >
                 <Upload className="h-4 w-4" />
                 {'\u5e94\u7528\u5230\u4efb\u52a1'}
@@ -745,12 +742,12 @@ export function BatchImageGenerationPage() {
             </div>
           </div>
 
-          <div className="surface p-4">
-            <div className="grid grid-cols-2 gap-3">
+          <div className="surface p-3">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={clearAll}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-border/70 bg-card/60 px-4 py-2.5 text-sm text-foreground/70 transition hover:bg-card/80 hover:text-foreground"
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-border/70 bg-card/60 px-4 py-2.5 text-sm text-foreground/70 transition hover:bg-card/80 hover:text-foreground"
               >
                 <RotateCcw className="h-4 w-4" />
                 {'\u6e05\u7a7a'}
@@ -759,13 +756,13 @@ export function BatchImageGenerationPage() {
                 type="button"
                 onClick={() => void downloadAll()}
                 disabled={completedTasks.length === 0}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-sm text-sky-200 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center justify-center gap-2 rounded-lg border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-sm text-sky-200 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Download className="h-4 w-4" />
                 {'\u4e0b\u8f7d'}
               </button>
             </div>
-            <div className="mt-4 rounded-xl border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
+            <div className="mt-3 rounded-lg border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
               {dailyUsage.imageLimit > 0
                 ? `\u4eca\u65e5\u5df2\u7528 ${dailyUsage.imageCount} / ${dailyUsage.imageLimit} \u6b21\u56fe\u50cf\u751f\u6210`
                 : '\u4eca\u65e5\u56fe\u50cf\u751f\u6210\u6b21\u6570\u672a\u8bbe\u9650'}
@@ -773,7 +770,7 @@ export function BatchImageGenerationPage() {
           </div>
 
           <div className="surface overflow-hidden">
-            <div className="flex items-center justify-between border-b border-border/70 p-4">
+            <div className="flex items-center justify-between border-b border-border/70 p-3">
               <div className="flex items-center gap-2 text-sm font-medium text-foreground">
                 <History className="h-4 w-4 text-sky-300" />
                 {'\u6700\u8fd1\u6279\u6b21'}
@@ -786,14 +783,14 @@ export function BatchImageGenerationPage() {
                 {'\u5237\u65b0'}
               </button>
             </div>
-            <div className="space-y-3 p-4">
+            <div className="space-y-2 p-3">
               {recentBatches.length === 0 ? (
-                <div className="rounded-xl border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
+                <div className="rounded-lg border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
                   {'\u6682\u65e0\u6279\u6b21\u8bb0\u5f55'}
                 </div>
               ) : (
                 recentBatches.map((batch) => (
-                  <div key={batch.batchId} className="rounded-xl border border-border/70 bg-card/50 p-3">
+                  <div key={batch.batchId} className="rounded-lg border border-border/70 bg-card/50 p-3">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-foreground">{batch.batchName}</p>
@@ -805,21 +802,21 @@ export function BatchImageGenerationPage() {
                         {batch.total}
                       </span>
                     </div>
-                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
-                      <div className="rounded-lg bg-emerald-500/10 py-2 text-emerald-300">
+                    <div className="mt-2 grid grid-cols-3 gap-1.5 text-center text-xs">
+                      <div className="rounded-md bg-emerald-500/10 py-1.5 text-emerald-300">
                         <p className="font-semibold">{batch.completed}</p>
                         <p className="text-[10px] opacity-70">{'\u5b8c\u6210'}</p>
                       </div>
-                      <div className="rounded-lg bg-amber-500/10 py-2 text-amber-300">
+                      <div className="rounded-md bg-amber-500/10 py-1.5 text-amber-300">
                         <p className="font-semibold">{batch.active}</p>
                         <p className="text-[10px] opacity-70">{'\u8fdb\u884c'}</p>
                       </div>
-                      <div className="rounded-lg bg-red-500/10 py-2 text-red-300">
+                      <div className="rounded-md bg-red-500/10 py-1.5 text-red-300">
                         <p className="font-semibold">{batch.failed}</p>
                         <p className="text-[10px] opacity-70">{'\u5931\u8d25'}</p>
                       </div>
                     </div>
-                    <div className="mt-3 flex items-center justify-between text-xs text-foreground/40">
+                    <div className="mt-2 flex items-center justify-between text-xs text-foreground/40">
                       <span>{`-\u6d88\u8017 ${formatBalance(batch.totalCost)}`}</span>
                       <span>{new Date(batch.updatedAt).toLocaleString('zh-CN', { hour12: false })}</span>
                     </div>
@@ -876,7 +873,7 @@ function TaskCard({
   return (
     <div
       className={cn(
-        'rounded-2xl border bg-card/55 p-4 shadow-sm transition',
+        'rounded-xl border bg-card/55 p-3 shadow-sm transition',
         task.status === 'completed'
           ? 'border-emerald-500/35'
           : task.status === 'failed'
@@ -886,7 +883,7 @@ function TaskCard({
               : 'border-border/70 hover:border-border'
       )}
     >
-      <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-3 flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-foreground">{`\u4efb\u52a1 ${index + 1}`}</h3>
           <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', statusClass(task.status))}>
@@ -897,14 +894,14 @@ function TaskCard({
           <button
             type="button"
             onClick={onRemove}
-            className="rounded-lg p-1.5 text-foreground/40 transition hover:bg-card/80 hover:text-foreground"
+            className="rounded-md p-1.5 text-foreground/40 transition hover:bg-card/80 hover:text-foreground"
           >
             <X className="h-4 w-4" />
           </button>
         )}
       </div>
 
-      <div className="mb-3 space-y-2">
+      <div className="mb-2.5 space-y-1.5">
         <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u6a21\u578b'}</label>
         <CustomSelect
           value={task.modelId || GLOBAL_MODEL_VALUE}
@@ -927,11 +924,11 @@ function TaskCard({
         }}
       />
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-3 gap-1.5">
         {Array.from({ length: Math.max(3, Math.min(MAX_IMAGES_PER_TASK, task.images.length + 1)) }).map((_, slotIndex) => {
           const image = task.images[slotIndex];
           return image ? (
-            <div key={image.id} className="group relative aspect-square overflow-hidden rounded-xl border border-border/70 bg-card/60">
+            <div key={image.id} className="group relative aspect-square overflow-hidden rounded-lg border border-border/70 bg-card/60">
               <img src={image.preview} alt="" className="h-full w-full object-cover" />
               <button
                 type="button"
@@ -951,7 +948,7 @@ function TaskCard({
                 );
                 input?.click();
               }}
-              className="aspect-square rounded-xl border-2 border-dashed border-border/70 bg-input/40 text-foreground/40 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300"
+              className="aspect-square rounded-lg border-2 border-dashed border-border/70 bg-input/40 text-foreground/40 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300"
             >
               <Plus className="mx-auto h-5 w-5" />
             </button>
@@ -973,13 +970,13 @@ function TaskCard({
       <textarea
         value={task.prompt}
         onChange={(event) => onPromptChange(event.target.value)}
-        rows={3}
+        rows={2}
         placeholder={'\u8f93\u5165\u63d0\u793a\u8bcd...'}
-        className="mt-3 w-full resize-none rounded-xl border border-border/70 bg-input/70 px-3 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
+        className="mt-2.5 w-full resize-none rounded-lg border border-border/70 bg-input/70 px-3 py-2.5 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
       />
 
       {task.error && (
-        <GenerationErrorAlert error={task.error} compact className="mt-3" />
+        <GenerationErrorAlert error={task.error} compact className="mt-2.5" />
       )}
 
       {task.resultUrl && (
@@ -987,14 +984,14 @@ function TaskCard({
           href={task.resultUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="mt-3 block overflow-hidden rounded-xl border border-border/70 bg-card/60"
+          className="mt-2.5 block overflow-hidden rounded-lg border border-border/70 bg-card/60"
         >
           <img src={task.resultUrl} alt="" className="aspect-video w-full object-cover" />
         </a>
       )}
 
       {isBusy && (
-        <div className="mt-3 h-2 overflow-hidden rounded-full bg-card/80">
+        <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-card/80">
           <div
             className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-all"
             style={{ width: `${Math.max(8, task.progress || 8)}%` }}
@@ -1007,7 +1004,7 @@ function TaskCard({
         onClick={onStart}
         disabled={isBusy}
         className={cn(
-          'mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg px-5 text-sm font-medium transition-all',
+          'mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg px-5 text-sm font-medium transition-all',
           isBusy
             ? 'cursor-not-allowed bg-card/60 text-foreground/40'
             : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white hover:opacity-90'
