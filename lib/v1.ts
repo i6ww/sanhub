@@ -11,9 +11,8 @@ export function extractBearerToken(request: NextRequest): string | null {
 }
 
 export function isAuthorized(token: string | null): boolean {
-  if (!token) return false;
   const required = process.env.V1_API_KEY || process.env.API_KEY;
-  if (!required) return true;
+  if (!required || !token) return false;
   return token === required;
 }
 
