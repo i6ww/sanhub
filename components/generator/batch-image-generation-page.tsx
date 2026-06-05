@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   Download,
+  History,
   Image as ImageIcon,
   Images,
   Loader2,
@@ -16,7 +17,7 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import type { Generation, SafeImageModel } from '@/types';
+import type { Generation, GenerationBatchSummary, SafeImageModel } from '@/types';
 import { toast } from '@/components/ui/toaster';
 import { CustomSelect } from '@/components/ui/select-custom';
 import { GenerationErrorAlert } from '@/components/generator/generation-error-alert';
@@ -60,7 +61,14 @@ type DailyUsagePayload = {
   limits?: { imageLimit?: number };
 };
 
+type BatchSubmitContext = {
+  batchId: string;
+  batchName: string;
+  batchSize: number;
+};
+
 const MAX_IMAGES_PER_TASK = 6;
+const MAX_BATCH_TASKS = 30;
 const DEFAULT_TASK_COUNT = 6;
 const SUBMIT_PARALLELISM = 3;
 const GLOBAL_MODEL_VALUE = '__global__';
@@ -172,6 +180,7 @@ export function BatchImageGenerationPage() {
   const [promptImport, setPromptImport] = useState('');
   const [submittingAll, setSubmittingAll] = useState(false);
   const [dailyUsage, setDailyUsage] = useState({ imageCount: 0, imageLimit: 0 });
+  const [recentBatches, setRecentBatches] = useState<GenerationBatchSummary[]>([]);
   const [error, setError] = useState('');
 
   const currentModel = useMemo(
@@ -239,9 +248,21 @@ export function BatchImageGenerationPage() {
     }
   }, []);
 
+  const loadRecentBatches = useCallback(async () => {
+    try {
+      const response = await fetch('/api/user/generation-batches?limit=6', { cache: 'no-store' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      setRecentBatches((payload.data || []) as GenerationBatchSummary[]);
+    } catch {
+      // ignore
+    }
+  }, []);
+
   useEffect(() => {
     void loadModels();
     void loadDailyUsage();
+    void loadRecentBatches();
     const abortControllers = abortControllersRef.current;
 
     return () => {
@@ -249,7 +270,7 @@ export function BatchImageGenerationPage() {
       tasks.forEach((task) => task.images.forEach((image) => URL.revokeObjectURL(image.preview)));
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadDailyUsage, loadModels]);
+  }, [loadDailyUsage, loadModels, loadRecentBatches]);
 
   const handleModelChange = (modelId: string) => {
     const model = models.find((item) => item.id === modelId);
@@ -272,7 +293,20 @@ export function BatchImageGenerationPage() {
   };
 
   const addTask = () => {
-    setTasks((current) => [...current, createEmptyTask(current.length + 1)]);
+    if (tasks.length >= MAX_BATCH_TASKS) {
+      toast({
+        title: '\u6279\u91cf\u4efb\u52a1\u5df2\u8fbe\u5230\u4e0a\u9650',
+        description: `\u4e00\u6b21\u6700\u591a\u53ef\u4ee5\u51c6\u5907 ${MAX_BATCH_TASKS} \u4e2a\u4efb\u52a1`,
+      });
+      return;
+    }
+
+    setTasks((current) => {
+      if (current.length >= MAX_BATCH_TASKS) {
+        return current;
+      }
+      return [...current, createEmptyTask(current.length + 1)];
+    });
   };
 
   const removeTask = (taskId: string) => {
@@ -304,21 +338,25 @@ export function BatchImageGenerationPage() {
       return;
     }
 
+    const limitedPrompts = prompts.slice(0, MAX_BATCH_TASKS);
+
     setTasks((current) => {
       const next = [...current];
-      while (next.length < prompts.length) {
+      while (next.length < limitedPrompts.length && next.length < MAX_BATCH_TASKS) {
         next.push(createEmptyTask(next.length + 1));
       }
       return next.map((task, index) =>
-        index < prompts.length
-          ? { ...task, prompt: prompts[index], status: 'idle', progress: 0, error: undefined }
+        index < limitedPrompts.length
+          ? { ...task, prompt: limitedPrompts[index], status: 'idle', progress: 0, error: undefined }
           : task
       );
     });
 
     toast({
       title: '\u5df2\u5bfc\u5165\u63d0\u793a\u8bcd',
-      description: `${prompts.length} \u4e2a\u6279\u91cf\u4efb\u52a1\u5df2\u51c6\u5907`,
+      description: prompts.length > MAX_BATCH_TASKS
+        ? `\u5df2\u5bfc\u5165\u524d ${MAX_BATCH_TASKS} \u4e2a\uff0c\u8d85\u51fa\u90e8\u5206\u8bf7\u5206\u6279\u5904\u7406`
+        : `${limitedPrompts.length} \u4e2a\u6279\u91cf\u4efb\u52a1\u5df2\u51c6\u5907`,
     });
   };
 
@@ -397,7 +435,7 @@ export function BatchImageGenerationPage() {
   );
 
   const submitTask = useCallback(
-    async (task: BatchTask) => {
+    async (task: BatchTask, batchContext?: BatchSubmitContext, batchIndex?: number) => {
       const taskModel = resolveTaskModel(models, selectedModelId, task);
       if (!taskModel) throw new Error('\u8bf7\u5148\u9009\u62e9\u6a21\u578b');
       if (!modelSupportsTask(taskModel, task)) {
@@ -426,6 +464,10 @@ export function BatchImageGenerationPage() {
           imageSize: taskImageSize,
           images,
           clientRequestId: createId('batch-image'),
+          batchId: batchContext?.batchId,
+          batchName: batchContext?.batchName,
+          batchIndex,
+          batchSize: batchContext?.batchSize,
         }),
       });
       const payload = await response.json();
@@ -455,6 +497,10 @@ export function BatchImageGenerationPage() {
       const eligible = targetTasks.filter((task) =>
         modelSupportsTask(resolveTaskModel(models, selectedModelId, task), task)
       );
+      if (eligible.length > MAX_BATCH_TASKS) {
+        setError(`\u4e00\u6b21\u6700\u591a\u63d0\u4ea4 ${MAX_BATCH_TASKS} \u4e2a\u6279\u91cf\u4efb\u52a1\uff0c\u8bf7\u5206\u6279\u5904\u7406`);
+        return;
+      }
       if (eligible.length === 0) {
         setError('\u6ca1\u6709\u53ef\u63d0\u4ea4\u7684\u4efb\u52a1');
         return;
@@ -467,15 +513,24 @@ export function BatchImageGenerationPage() {
 
       setError('');
       setSubmittingAll(true);
+      const shouldCreateBatch = targetTasks.length > 1;
+      const batchContext: BatchSubmitContext | undefined = shouldCreateBatch
+        ? {
+            batchId: createId('batch'),
+            batchName: `Batch ${new Date().toLocaleString('zh-CN', { hour12: false })}`,
+            batchSize: eligible.length,
+          }
+        : undefined;
       let cursor = 0;
       let submitted = 0;
 
       async function worker() {
         while (cursor < eligible.length) {
           const task = eligible[cursor];
+          const taskIndex = cursor + 1;
           cursor += 1;
           try {
-            await submitTask(task);
+            await submitTask(task, batchContext, taskIndex);
             submitted += 1;
           } catch (err) {
             updateTask(task.id, {
@@ -489,13 +544,16 @@ export function BatchImageGenerationPage() {
 
       await Promise.all(Array.from({ length: Math.min(SUBMIT_PARALLELISM, eligible.length) }, worker));
       setSubmittingAll(false);
+      if (batchContext) {
+        void loadRecentBatches();
+      }
 
       toast({
         title: '\u6279\u91cf\u4efb\u52a1\u5df2\u5904\u7406',
         description: `${submitted} / ${eligible.length} \u4e2a\u4efb\u52a1\u5df2\u5b8c\u6210\u6216\u8fdb\u5165\u8f6e\u8be2`,
       });
     },
-    [dailyUsage.imageLimit, models, remainingDaily, selectedModelId, submitTask, updateTask]
+    [dailyUsage.imageLimit, loadRecentBatches, models, remainingDaily, selectedModelId, submitTask, updateTask]
   );
 
   const submitSingle = (task: BatchTask) => {
@@ -540,6 +598,9 @@ export function BatchImageGenerationPage() {
           <h1 className="mt-3 text-3xl font-light text-foreground">{'\u6279\u91cf\u751f\u56fe'}</h1>
           <p className="mt-1 text-sm text-foreground/50">
             {'\u4e00\u6b21\u51c6\u5907\u591a\u4e2a\u63d0\u793a\u8bcd\u6216\u53c2\u8003\u56fe\uff0c\u6309\u961f\u5217\u6279\u91cf\u63d0\u4ea4\u751f\u6210'}
+          </p>
+          <p className="mt-1 text-xs text-foreground/40">
+            {`\u5f53\u524d ${tasks.length} / ${MAX_BATCH_TASKS} \u4e2a\u4efb\u52a1`}
           </p>
         </div>
         <div className="grid grid-cols-3 gap-3 rounded-2xl border border-border/70 bg-card/50 p-3 text-center">
@@ -644,10 +705,18 @@ export function BatchImageGenerationPage() {
           <button
             type="button"
             onClick={addTask}
-            className="min-h-[260px] rounded-2xl border border-dashed border-border/80 bg-card/30 text-foreground/45 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300"
+            disabled={tasks.length >= MAX_BATCH_TASKS}
+            className={cn(
+              'min-h-[260px] rounded-2xl border border-dashed border-border/80 bg-card/30 text-foreground/45 transition',
+              tasks.length >= MAX_BATCH_TASKS
+                ? 'cursor-not-allowed opacity-50'
+                : 'hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300'
+            )}
           >
             <Plus className="mx-auto h-6 w-6" />
-            <span className="mt-2 block text-sm">{'\u6dfb\u52a0\u4efb\u52a1'}</span>
+            <span className="mt-2 block text-sm">
+              {tasks.length >= MAX_BATCH_TASKS ? '\u5df2\u8fbe\u4e0a\u9650' : '\u6dfb\u52a0\u4efb\u52a1'}
+            </span>
           </button>
         </div>
 
@@ -700,6 +769,63 @@ export function BatchImageGenerationPage() {
               {dailyUsage.imageLimit > 0
                 ? `\u4eca\u65e5\u5df2\u7528 ${dailyUsage.imageCount} / ${dailyUsage.imageLimit} \u6b21\u56fe\u50cf\u751f\u6210`
                 : '\u4eca\u65e5\u56fe\u50cf\u751f\u6210\u6b21\u6570\u672a\u8bbe\u9650'}
+            </div>
+          </div>
+
+          <div className="surface overflow-hidden">
+            <div className="flex items-center justify-between border-b border-border/70 p-4">
+              <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                <History className="h-4 w-4 text-sky-300" />
+                {'\u6700\u8fd1\u6279\u6b21'}
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadRecentBatches()}
+                className="text-xs text-sky-300 transition hover:text-sky-200"
+              >
+                {'\u5237\u65b0'}
+              </button>
+            </div>
+            <div className="space-y-3 p-4">
+              {recentBatches.length === 0 ? (
+                <div className="rounded-xl border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
+                  {'\u6682\u65e0\u6279\u6b21\u8bb0\u5f55'}
+                </div>
+              ) : (
+                recentBatches.map((batch) => (
+                  <div key={batch.batchId} className="rounded-xl border border-border/70 bg-card/50 p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{batch.batchName}</p>
+                        <p className="mt-1 truncate text-xs text-foreground/40">
+                          {batch.samplePrompt || batch.batchId.slice(0, 8)}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-full border border-border/70 px-2 py-0.5 text-[11px] text-foreground/50">
+                        {batch.total}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="rounded-lg bg-emerald-500/10 py-2 text-emerald-300">
+                        <p className="font-semibold">{batch.completed}</p>
+                        <p className="text-[10px] opacity-70">{'\u5b8c\u6210'}</p>
+                      </div>
+                      <div className="rounded-lg bg-amber-500/10 py-2 text-amber-300">
+                        <p className="font-semibold">{batch.active}</p>
+                        <p className="text-[10px] opacity-70">{'\u8fdb\u884c'}</p>
+                      </div>
+                      <div className="rounded-lg bg-red-500/10 py-2 text-red-300">
+                        <p className="font-semibold">{batch.failed}</p>
+                        <p className="text-[10px] opacity-70">{'\u5931\u8d25'}</p>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-xs text-foreground/40">
+                      <span>{`-\u6d88\u8017 ${formatBalance(batch.totalCost)}`}</span>
+                      <span>{new Date(batch.updatedAt).toLocaleString('zh-CN', { hour12: false })}</span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </aside>

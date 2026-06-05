@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder, PaymentOrderSummary, ConsumptionRecord, GenerationJob, GenerationQueueConfig } from '@/types';
+import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder, PaymentOrderListResult, PaymentOrderStatus, PaymentOrderSummary, ConsumptionRecord, GenerationBatchSummary, GenerationJob, GenerationQueueConfig } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
@@ -1128,6 +1128,71 @@ export async function getRecentPaymentOrders(
   }));
 }
 
+export async function getPaymentOrdersForAdmin(options: {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  status?: PaymentOrderStatus | 'all';
+  startTime?: number;
+  endTime?: number;
+} = {}): Promise<PaymentOrderListResult> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+  const safeOffset = Math.max(Number(options.offset) || 0, 0);
+  const whereClauses: string[] = [];
+  const values: unknown[] = [];
+
+  if (options.status && options.status !== 'all') {
+    whereClauses.push('p.status = ?');
+    values.push(options.status);
+  }
+
+  if (options.search) {
+    const keyword = `%${options.search.trim()}%`;
+    whereClauses.push('(p.out_trade_no LIKE ? OR p.provider_trade_no LIKE ? OR u.email LIKE ? OR u.name LIKE ?)');
+    values.push(keyword, keyword, keyword, keyword);
+  }
+
+  if (options.startTime) {
+    whereClauses.push('p.created_at >= ?');
+    values.push(options.startTime);
+  }
+
+  if (options.endTime) {
+    whereClauses.push('p.created_at <= ?');
+    values.push(options.endTime);
+  }
+
+  const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+  const [countRows] = await db.execute(
+    `SELECT COUNT(1) as count
+     FROM payment_orders p
+     LEFT JOIN users u ON p.user_id = u.id
+     ${whereSql}`,
+    values
+  );
+
+  const [rows] = await db.execute(
+    `SELECT p.*, u.email as user_email, u.name as user_name
+     FROM payment_orders p
+     LEFT JOIN users u ON p.user_id = u.id
+     ${whereSql}
+     ORDER BY p.created_at DESC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    values
+  );
+
+  return {
+    orders: (rows as any[]).map((row) => ({
+      ...mapPaymentOrder(row),
+      userEmail: row.user_email || undefined,
+      userName: row.user_name || undefined,
+    })),
+    total: Number((countRows as any[])[0]?.count || 0),
+  };
+}
+
 export async function completePaymentOrder(input: {
   outTradeNo: string;
   providerTradeNo?: string;
@@ -1268,6 +1333,24 @@ export async function saveGeneration(
   return gen;
 }
 
+function mapGenerationRow(row: any): Generation {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    type: row.type,
+    prompt: row.prompt,
+    params: parseJsonValue<Generation['params']>(row.params, {}),
+    resultUrl: row.result_url,
+    cost: Number(row.cost) || 0,
+    status: row.status || 'completed',
+    balancePrecharged: Boolean(row.balance_precharged),
+    balanceRefunded: Boolean(row.balance_refunded),
+    errorMessage: row.error_message || undefined,
+    createdAt: Number(row.created_at),
+    updatedAt: Number(row.updated_at || row.created_at),
+  };
+}
+
 export async function getGenerationByClientRequestId(
   userId: string,
   clientRequestId: string
@@ -1288,21 +1371,7 @@ export async function getGenerationByClientRequestId(
       continue;
     }
 
-    return {
-      id: row.id,
-      userId: row.user_id,
-      type: row.type,
-      prompt: row.prompt,
-      params,
-      resultUrl: row.result_url,
-      cost: row.cost,
-      status: row.status || 'completed',
-      balancePrecharged: Boolean(row.balance_precharged),
-      balanceRefunded: Boolean(row.balance_refunded),
-      errorMessage: row.error_message || undefined,
-      createdAt: Number(row.created_at),
-      updatedAt: Number(row.updated_at || row.created_at),
-    };
+    return mapGenerationRow({ ...row, params: JSON.stringify(params) });
   }
 
   return null;
@@ -1624,21 +1693,67 @@ export async function getUserGenerations(
     values
   );
 
-  return (rows as any[]).map((row) => ({
-    id: row.id,
-    userId: row.user_id,
-    type: row.type,
-    prompt: row.prompt,
-    params: typeof row.params === 'string' ? JSON.parse(row.params) : row.params,
-    resultUrl: row.result_url,
-    cost: row.cost,
-    status: row.status || 'completed',
-    balancePrecharged: Boolean(row.balance_precharged),
-    balanceRefunded: Boolean(row.balance_refunded),
-    errorMessage: row.error_message || undefined,
-    createdAt: Number(row.created_at),
-    updatedAt: Number(row.updated_at || row.created_at),
-  }));
+  return (rows as any[]).map(mapGenerationRow);
+}
+
+export async function getUserGenerationBatches(
+  userId: string,
+  limit = 20
+): Promise<GenerationBatchSummary[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 50);
+  const [rows] = await db.execute(
+    `SELECT id, prompt, params, result_url, cost, status, created_at, updated_at
+     FROM generations
+     WHERE user_id = ? AND params LIKE ?
+     ORDER BY created_at DESC
+     LIMIT 500`,
+    [userId, '%"batchId"%']
+  );
+
+  const batches = new Map<string, GenerationBatchSummary>();
+  for (const row of rows as any[]) {
+    const generation = mapGenerationRow({ ...row, user_id: userId, type: 'gemini-image' });
+    const batchId = generation.params.batchId;
+    if (!batchId) continue;
+
+    const batchName = generation.params.batchName || `Batch ${batchId.slice(0, 8)}`;
+    const current = batches.get(batchId) || {
+      batchId,
+      batchName,
+      total: 0,
+      completed: 0,
+      failed: 0,
+      active: 0,
+      totalCost: 0,
+      createdAt: generation.createdAt,
+      updatedAt: generation.updatedAt,
+      samplePrompt: generation.prompt || undefined,
+      sampleResultUrl: generation.resultUrl || undefined,
+    };
+
+    current.total += 1;
+    current.totalCost += generation.cost || 0;
+    current.createdAt = Math.min(current.createdAt, generation.createdAt);
+    current.updatedAt = Math.max(current.updatedAt, generation.updatedAt);
+    if (!current.samplePrompt && generation.prompt) current.samplePrompt = generation.prompt;
+    if (!current.sampleResultUrl && generation.resultUrl) current.sampleResultUrl = generation.resultUrl;
+
+    if (generation.status === 'completed') {
+      current.completed += 1;
+    } else if (generation.status === 'failed' || generation.status === 'cancelled') {
+      current.failed += 1;
+    } else {
+      current.active += 1;
+    }
+
+    batches.set(batchId, current);
+  }
+
+  return Array.from(batches.values())
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, safeLimit);
 }
 
 export async function getUserConsumptionRecords(

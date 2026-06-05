@@ -166,6 +166,10 @@ export async function POST(request: NextRequest) {
       googleImageConfig.image_size
     );
     const clientRequestId = firstString(payload.clientRequestId, payload.client_request_id) || '';
+    const batchId = firstString(payload.batchId, payload.batch_id);
+    const batchName = firstString(payload.batchName, payload.batch_name);
+    const batchIndex = Number(payload.batchIndex ?? payload.batch_index);
+    const batchSize = Number(payload.batchSize ?? payload.batch_size);
     const resolvedInputSize = resolveImageSize(size);
     const effectiveAspectRatio = aspectRatio || resolvedInputSize.aspectRatio;
     const effectiveImageSize =
@@ -352,6 +356,10 @@ export async function POST(request: NextRequest) {
         imageCount: imageList.length,
         progress: 0,
         clientRequestId: clientRequestId || undefined,
+        batchId,
+        batchName,
+        batchIndex: Number.isFinite(batchIndex) ? batchIndex : undefined,
+        batchSize: Number.isFinite(batchSize) ? batchSize : undefined,
       };
 
       let generation: Generation;

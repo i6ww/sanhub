@@ -1,7 +1,7 @@
-import type { InviteBatchResult, InviteCode, RedemptionBatchSummary, RedemptionCode, StatsOverview, DailyStats, PaymentStatsSummary } from '@/types';
+import type { InviteBatchResult, InviteCode, RedemptionBatchSummary, RedemptionCode, StatsOverview, DailyStats, PaymentStatsSummary, PaymentOrderStatus } from '@/types';
 import { generateId } from './utils';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
-import { getRecentPaymentOrders, getSystemConfig } from './db';
+import { getPaymentOrdersForAdmin, getSystemConfig } from './db';
 
 // ========================================
 // Database adapter
@@ -657,7 +657,14 @@ export async function deleteRedemptionCodesByBatch(batchId: string): Promise<num
 // Statistics functions
 // ========================================
 
-export async function getStatsOverview(days = 30): Promise<StatsOverview> {
+export async function getStatsOverview(days = 30, paymentFilters: {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  status?: PaymentOrderStatus | 'all';
+  startTime?: number;
+  endTime?: number;
+} = {}): Promise<StatsOverview> {
   await initializeCodesTables();
   const db = getAdapter();
   const dbType = process.env.DB_TYPE || 'sqlite';
@@ -798,7 +805,14 @@ export async function getStatsOverview(days = 30): Promise<StatsOverview> {
     weekPoints: Number(paymentRow.week_points || 0),
     monthPoints: Number(paymentRow.month_points || 0),
   };
-  const recentPaymentOrders = await getRecentPaymentOrders(50);
+  const paymentOrdersResult = await getPaymentOrdersForAdmin({
+    limit: paymentFilters.limit ?? 20,
+    offset: paymentFilters.offset ?? 0,
+    search: paymentFilters.search,
+    status: paymentFilters.status,
+    startTime: paymentFilters.startTime,
+    endTime: paymentFilters.endTime,
+  });
 
   return {
     totalUsers,
@@ -812,7 +826,8 @@ export async function getStatsOverview(days = 30): Promise<StatsOverview> {
     dailyStats,
     generationTypes,
     paymentStats,
-    recentPaymentOrders,
+    recentPaymentOrders: paymentOrdersResult.orders,
+    paymentOrdersTotal: paymentOrdersResult.total,
   };
 }
 

@@ -17,19 +17,20 @@ services:
       - UNDICI_NO_BODY_TIMEOUT=1
 
       # Auth
-      - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:-}
+      - NEXTAUTH_URL=${NEXTAUTH_URL:?Set NEXTAUTH_URL in .env}
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET:?Set NEXTAUTH_SECRET in .env}
 
       # Admin account created on first boot
-      - ADMIN_EMAIL=${ADMIN_EMAIL:-admin@sanhub.local}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-sanhub123}
+      - ADMIN_EMAIL=${ADMIN_EMAIL:?Set ADMIN_EMAIL in .env}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
 
       # MySQL is the default Docker database.
       - DB_TYPE=mysql
       - MYSQL_HOST=mysql
       - MYSQL_PORT=3306
       - MYSQL_USER=${MYSQL_USER:-sanhub}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-sanhub_password}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
       - MYSQL_DATABASE=${MYSQL_DATABASE:-sanhub}
       - MYSQL_POOL_SIZE=${MYSQL_POOL_SIZE:-50}
       - MYSQL_SSL=false
@@ -47,8 +48,8 @@ services:
     environment:
       - MYSQL_DATABASE=${MYSQL_DATABASE:-sanhub}
       - MYSQL_USER=${MYSQL_USER:-sanhub}
-      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-sanhub_password}
-      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:-sanhub_root_password}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:?Set MYSQL_PASSWORD in .env}
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci

@@ -14,6 +14,13 @@ function formatDateTime(value?: number): string {
   return new Date(value).toLocaleString('zh-CN', { hour12: false });
 }
 
+function dateInputToTimestamp(value: string, endOfDay = false): number | undefined {
+  if (!value) return undefined;
+  const date = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`);
+  const timestamp = date.getTime();
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
 function paymentStatusLabel(status: string): string {
   if (status === 'succeeded') return '\u5df2\u652f\u4ed8';
   if (status === 'failed') return '\u5931\u8d25';
@@ -44,16 +51,33 @@ export default function StatsPage() {
   const [stats, setStats] = useState<StatsOverview | null>(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(30);
+  const [paymentPage, setPaymentPage] = useState(1);
+  const [paymentSearch, setPaymentSearch] = useState('');
+  const [paymentStatus, setPaymentStatus] = useState('all');
+  const [paymentStartDate, setPaymentStartDate] = useState('');
+  const [paymentEndDate, setPaymentEndDate] = useState('');
 
   useEffect(() => {
     loadStats();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [days]);
+  }, [days, paymentPage, paymentSearch, paymentStatus, paymentStartDate, paymentEndDate]);
 
   const loadStats = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`/api/admin/stats?days=${days}`);
+      const params = new URLSearchParams({
+        days: String(days),
+        paymentPage: String(paymentPage),
+        paymentLimit: '20',
+      });
+      if (paymentSearch.trim()) params.set('paymentSearch', paymentSearch.trim());
+      if (paymentStatus !== 'all') params.set('paymentStatus', paymentStatus);
+      const startTime = dateInputToTimestamp(paymentStartDate);
+      const endTime = dateInputToTimestamp(paymentEndDate, true);
+      if (startTime) params.set('paymentStartTime', String(startTime));
+      if (endTime) params.set('paymentEndTime', String(endTime));
+
+      const res = await fetch(`/api/admin/stats?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setStats(data.data);
@@ -80,6 +104,8 @@ export default function StatsPage() {
   const genCeil = genTicks[genTicks.length - 1] || 1;
   const userCeil = userTicks[userTicks.length - 1] || 1;
   const totalTypeCount = stats.generationTypes.reduce((sum, item) => sum + item.count, 0);
+  const paymentTotal = stats.paymentOrdersTotal ?? stats.recentPaymentOrders.length;
+  const paymentTotalPages = Math.max(1, Math.ceil(paymentTotal / 20));
   const typeMeta: Record<string, { label: string; color: string }> = {
     'sora-video': { label: '视频', color: 'from-sky-500 to-emerald-500' },
     'sora-image': { label: 'Sora 图像', color: 'from-blue-500 to-cyan-500' },
@@ -258,10 +284,89 @@ export default function StatsPage() {
 
       {/* Payment Records Table */}
       <div className="bg-card/60 border border-border/70 rounded-2xl overflow-hidden">
-        <div className="p-5 border-b border-border/70">
-          <div className="flex items-center gap-2">
-            <ReceiptText className="w-5 h-5 text-sky-300" />
-            <h2 className="text-lg font-semibold text-foreground">{'\u6700\u8fd1\u5145\u503c\u8bb0\u5f55'}</h2>
+        <div className="space-y-4 p-5 border-b border-border/70">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-2">
+              <ReceiptText className="w-5 h-5 text-sky-300" />
+              <h2 className="text-lg font-semibold text-foreground">{'\u5145\u503c\u8bb0\u5f55'}</h2>
+              <span className="rounded-full border border-border/70 px-2 py-0.5 text-xs text-foreground/45">
+                {`${paymentTotal} \u6761`}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-foreground/45">
+              <span>{`\u7b2c ${paymentPage} / ${paymentTotalPages} \u9875`}</span>
+              <button
+                type="button"
+                onClick={() => setPaymentPage((page) => Math.max(1, page - 1))}
+                disabled={paymentPage <= 1}
+                className="rounded-lg border border-border/70 px-3 py-1.5 text-foreground/70 transition hover:bg-card/80 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {'\u4e0a\u4e00\u9875'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentPage((page) => Math.min(paymentTotalPages, page + 1))}
+                disabled={paymentPage >= paymentTotalPages}
+                className="rounded-lg border border-border/70 px-3 py-1.5 text-foreground/70 transition hover:bg-card/80 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {'\u4e0b\u4e00\u9875'}
+              </button>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-[minmax(180px,1fr)_150px_150px_150px_auto]">
+            <input
+              value={paymentSearch}
+              onChange={(event) => {
+                setPaymentPage(1);
+                setPaymentSearch(event.target.value);
+              }}
+              placeholder={'\u641c\u7d22\u7528\u6237\u3001\u90ae\u7bb1\u6216\u8ba2\u5355\u53f7'}
+              className="rounded-xl border border-border/70 bg-input/70 px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
+            />
+            <select
+              value={paymentStatus}
+              onChange={(event) => {
+                setPaymentPage(1);
+                setPaymentStatus(event.target.value);
+              }}
+              className="rounded-xl border border-border/70 bg-input/70 px-3 py-2 text-sm text-foreground outline-none focus:border-border"
+            >
+              <option value="all">{'\u5168\u90e8\u72b6\u6001'}</option>
+              <option value="pending">{'\u5f85\u652f\u4ed8'}</option>
+              <option value="succeeded">{'\u5df2\u652f\u4ed8'}</option>
+              <option value="failed">{'\u5931\u8d25'}</option>
+            </select>
+            <input
+              type="date"
+              value={paymentStartDate}
+              onChange={(event) => {
+                setPaymentPage(1);
+                setPaymentStartDate(event.target.value);
+              }}
+              className="rounded-xl border border-border/70 bg-input/70 px-3 py-2 text-sm text-foreground outline-none focus:border-border"
+            />
+            <input
+              type="date"
+              value={paymentEndDate}
+              onChange={(event) => {
+                setPaymentPage(1);
+                setPaymentEndDate(event.target.value);
+              }}
+              className="rounded-xl border border-border/70 bg-input/70 px-3 py-2 text-sm text-foreground outline-none focus:border-border"
+            />
+            <button
+              type="button"
+              onClick={() => {
+                setPaymentPage(1);
+                setPaymentSearch('');
+                setPaymentStatus('all');
+                setPaymentStartDate('');
+                setPaymentEndDate('');
+              }}
+              className="rounded-xl border border-border/70 px-4 py-2 text-sm text-foreground/70 transition hover:bg-card/80 hover:text-foreground"
+            >
+              {'\u91cd\u7f6e'}
+            </button>
           </div>
         </div>
         {stats.recentPaymentOrders.length === 0 ? (

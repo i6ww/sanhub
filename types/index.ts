@@ -111,6 +111,10 @@ export interface GenerationParams {
   processedPrompt?: string;
   progress?: number; // 生成进度 0-100
   clientRequestId?: string;
+  batchId?: string;
+  batchName?: string;
+  batchIndex?: number;
+  batchSize?: number;
 }
 
 // SORA 后台配置
@@ -494,6 +498,11 @@ export interface PaymentOrderSummary extends PaymentOrder {
   userName?: string;
 }
 
+export interface PaymentOrderListResult {
+  orders: PaymentOrderSummary[];
+  total: number;
+}
+
 export interface ConsumptionRecord {
   id: string;
   generationId: string;
@@ -505,6 +514,20 @@ export interface ConsumptionRecord {
   status: Generation['status'];
   createdAt: number;
   updatedAt: number;
+}
+
+export interface GenerationBatchSummary {
+  batchId: string;
+  batchName: string;
+  total: number;
+  completed: number;
+  failed: number;
+  active: number;
+  totalCost: number;
+  createdAt: number;
+  updatedAt: number;
+  samplePrompt?: string;
+  sampleResultUrl?: string;
 }
 
 export interface PaymentStatsSummary {
@@ -758,6 +781,7 @@ export interface StatsOverview {
   generationTypes: GenerationTypeStat[];
   paymentStats: PaymentStatsSummary;
   recentPaymentOrders: PaymentOrderSummary[];
+  paymentOrdersTotal?: number;
 }
 
 // ========================================

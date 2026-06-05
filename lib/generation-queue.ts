@@ -80,6 +80,61 @@ function decrementActive(state: QueueRuntime, channelId: string) {
   }
 }
 
+function isRetryableGenerationError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || '');
+  const normalized = message.toLowerCase();
+
+  const permanentPatterns = [
+    'insufficient balance',
+    'balance',
+    'missing model',
+    'model not found',
+    'model is disabled',
+    'invalid generation job payload',
+    'invalid',
+    'bad request',
+    'prompt blocked',
+    'safety policy',
+    'requires a reference image',
+    'please enter a prompt',
+    'unauthorized',
+    'forbidden',
+    '401',
+    '403',
+    '404',
+  ];
+
+  if (permanentPatterns.some((pattern) => normalized.includes(pattern))) {
+    return false;
+  }
+
+  const retryablePatterns = [
+    'timeout',
+    'timed out',
+    'network',
+    'fetch',
+    'socket',
+    'econnreset',
+    'econnrefused',
+    'etimedout',
+    'rate limit',
+    'too many requests',
+    'busy',
+    'overloaded',
+    'temporarily unavailable',
+    'service unavailable',
+    'upstream',
+    'gateway',
+    '429',
+    '500',
+    '502',
+    '503',
+    '504',
+  ];
+
+  return retryablePatterns.some((pattern) => normalized.includes(pattern));
+}
+
 export async function executeImageGenerationJobPayload(
   generationId: string,
   payload: ImageGenerationJobPayload
@@ -127,7 +182,7 @@ async function executeClaimedJob(state: QueueRuntime, job: GenerationJob) {
     console.log(`[GenerationQueue] Completed job ${job.id}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Generation failed';
-    const shouldRetry = job.attempts < job.maxAttempts;
+    const shouldRetry = job.attempts < job.maxAttempts && isRetryableGenerationError(error);
 
     console.error(`[GenerationQueue] Job ${job.id} failed:`, error);
     await failGenerationJob(job.id, message, shouldRetry);
