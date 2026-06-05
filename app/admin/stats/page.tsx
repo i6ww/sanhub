@@ -1,9 +1,30 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { BarChart3, Users, Zap, TrendingUp, Loader2, MessageSquare } from 'lucide-react';
+import { BarChart3, Users, Zap, Loader2, MessageSquare, CreditCard, ReceiptText } from 'lucide-react';
 import type { StatsOverview } from '@/types';
 import { formatBalance } from '@/lib/utils';
+
+function formatCurrency(cents: number): string {
+  return `¥${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`;
+}
+
+function formatDateTime(value?: number): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+}
+
+function paymentStatusLabel(status: string): string {
+  if (status === 'succeeded') return '\u5df2\u652f\u4ed8';
+  if (status === 'failed') return '\u5931\u8d25';
+  return '\u5f85\u652f\u4ed8';
+}
+
+function paymentStatusClass(status: string): string {
+  if (status === 'succeeded') return 'text-emerald-300';
+  if (status === 'failed') return 'text-red-300';
+  return 'text-amber-300';
+}
 
 // Calculate nice Y-axis ticks
 function calcYAxisTicks(max: number): number[] {
@@ -102,6 +123,28 @@ export default function StatsPage() {
         <StatCard icon={Users} label="今日新增用户" value={stats.todayUsers} color="sky" />
         <StatCard icon={BarChart3} label="今日生成" value={stats.todayGenerations} color="orange" />
         <StatCard icon={MessageSquare} label="启用模型" value={stats.enabledChatModels} color="emerald" />
+      </div>
+
+      {/* Payment Overview Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <PaymentStatCard
+          icon={CreditCard}
+          label={'\u4eca\u65e5\u5145\u503c'}
+          amount={stats.paymentStats.todayAmountCents}
+          points={stats.paymentStats.todayPoints}
+        />
+        <PaymentStatCard
+          icon={CreditCard}
+          label={'\u672c\u5468\u5145\u503c'}
+          amount={stats.paymentStats.weekAmountCents}
+          points={stats.paymentStats.weekPoints}
+        />
+        <PaymentStatCard
+          icon={CreditCard}
+          label={'\u672c\u6708\u5145\u503c'}
+          amount={stats.paymentStats.monthAmountCents}
+          points={stats.paymentStats.monthPoints}
+        />
       </div>
 
       {/* Generation Chart */}
@@ -213,6 +256,55 @@ export default function StatsPage() {
         )}
       </div>
 
+      {/* Payment Records Table */}
+      <div className="bg-card/60 border border-border/70 rounded-2xl overflow-hidden">
+        <div className="p-5 border-b border-border/70">
+          <div className="flex items-center gap-2">
+            <ReceiptText className="w-5 h-5 text-sky-300" />
+            <h2 className="text-lg font-semibold text-foreground">{'\u6700\u8fd1\u5145\u503c\u8bb0\u5f55'}</h2>
+          </div>
+        </div>
+        {stats.recentPaymentOrders.length === 0 ? (
+          <div className="px-5 py-10 text-center text-sm text-foreground/40">
+            {'\u6682\u65e0\u5145\u503c\u8bb0\u5f55'}
+          </div>
+        ) : (
+          <div className="overflow-x-auto no-scrollbar max-h-96">
+            <table className="w-full min-w-[840px]">
+              <thead className="sticky top-0 bg-background/60 backdrop-blur">
+                <tr className="border-b border-border/70">
+                  <th className="text-left text-sm font-medium text-foreground/50 px-5 py-3">{'\u7528\u6237'}</th>
+                  <th className="text-left text-sm font-medium text-foreground/50 px-5 py-3">{'\u8ba2\u5355\u53f7'}</th>
+                  <th className="text-right text-sm font-medium text-foreground/50 px-5 py-3">{'\u5b9e\u4ed8\u91d1\u989d'}</th>
+                  <th className="text-right text-sm font-medium text-foreground/50 px-5 py-3">{'\u5230\u8d26\u79ef\u5206'}</th>
+                  <th className="text-right text-sm font-medium text-foreground/50 px-5 py-3">{'\u72b6\u6001'}</th>
+                  <th className="text-right text-sm font-medium text-foreground/50 px-5 py-3">{'\u65f6\u95f4'}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {stats.recentPaymentOrders.map((order) => (
+                  <tr key={order.id} className="border-b border-border/70 hover:bg-card/60">
+                    <td className="px-5 py-3">
+                      <div className="text-sm text-foreground">{order.userName || '-'}</div>
+                      <div className="text-xs text-foreground/40">{order.userEmail || order.userId}</div>
+                    </td>
+                    <td className="px-5 py-3 font-mono text-xs text-foreground/60">{order.outTradeNo}</td>
+                    <td className="px-5 py-3 text-right text-foreground">{formatCurrency(order.paidAmountCents)}</td>
+                    <td className="px-5 py-3 text-right text-emerald-300">+{formatBalance(order.points)}</td>
+                    <td className={`px-5 py-3 text-right ${paymentStatusClass(order.status)}`}>
+                      {paymentStatusLabel(order.status)}
+                    </td>
+                    <td className="px-5 py-3 text-right text-xs text-foreground/50">
+                      {formatDateTime(order.paidAt || order.createdAt)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Daily Details Table */}
       <div className="bg-card/60 border border-border/70 rounded-2xl overflow-hidden">
         <div className="p-5 border-b border-border/70">
@@ -271,6 +363,29 @@ function StatCard({ icon: Icon, label, value, color }: {
         <div>
           <p className="text-2xl font-semibold text-foreground">{value.toLocaleString()}</p>
           <p className="text-sm text-foreground/50">{label}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PaymentStatCard({ icon: Icon, label, amount, points }: {
+  icon: typeof CreditCard;
+  label: string;
+  amount: number;
+  points: number;
+}) {
+  return (
+    <div className="bg-card/60 border border-border/70 rounded-2xl p-5 relative overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.12),transparent_55%)] pointer-events-none" />
+      <div className="relative flex items-center gap-3">
+        <div className="w-10 h-10 bg-sky-500/20 rounded-xl flex items-center justify-center">
+          <Icon className="w-5 h-5 text-sky-300" />
+        </div>
+        <div>
+          <p className="text-2xl font-semibold text-foreground">{formatCurrency(amount)}</p>
+          <p className="text-sm text-foreground/50">{label}</p>
+          <p className="mt-1 text-xs text-emerald-300">+{formatBalance(points)} {'\u79ef\u5206'}</p>
         </div>
       </div>
     </div>

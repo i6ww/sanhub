@@ -44,6 +44,15 @@ export default function AdminPage() {
           todayGenerations: 0,
           dailyStats: [],
           generationTypes: [],
+          paymentStats: {
+            todayAmountCents: 0,
+            weekAmountCents: 0,
+            monthAmountCents: 0,
+            todayPoints: 0,
+            weekPoints: 0,
+            monthPoints: 0,
+          },
+          recentPaymentOrders: [],
         });
       }
 
@@ -68,6 +77,15 @@ export default function AdminPage() {
         todayGenerations: 0,
         dailyStats: [],
         generationTypes: [],
+        paymentStats: {
+          todayAmountCents: 0,
+          weekAmountCents: 0,
+          monthAmountCents: 0,
+          todayPoints: 0,
+          weekPoints: 0,
+          monthPoints: 0,
+        },
+        recentPaymentOrders: [],
       });
       setUsers([]);
     } finally {

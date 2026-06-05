@@ -1,7 +1,7 @@
-import type { InviteBatchResult, InviteCode, RedemptionBatchSummary, RedemptionCode, StatsOverview, DailyStats } from '@/types';
+import type { InviteBatchResult, InviteCode, RedemptionBatchSummary, RedemptionCode, StatsOverview, DailyStats, PaymentStatsSummary } from '@/types';
 import { generateId } from './utils';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
-import { getSystemConfig } from './db';
+import { getRecentPaymentOrders, getSystemConfig } from './db';
 
 // ========================================
 // Database adapter
@@ -665,6 +665,9 @@ export async function getStatsOverview(days = 30): Promise<StatsOverview> {
   // Use UTC for consistency
   const now = new Date();
   const todayUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dayOfWeek = now.getUTCDay() || 7;
+  const weekUTC = todayUTC - (dayOfWeek - 1) * 24 * 60 * 60 * 1000;
+  const monthUTC = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
   const startDate = todayUTC - (days - 1) * 24 * 60 * 60 * 1000;
 
   // Total counts
@@ -774,6 +777,29 @@ export async function getStatsOverview(days = 30): Promise<StatsOverview> {
     count: Number(row.count || 0),
   }));
 
+  const [paymentRows] = await db.execute(
+    `SELECT
+       SUM(CASE WHEN paid_at >= ? THEN paid_amount_cents ELSE 0 END) as today_amount_cents,
+       SUM(CASE WHEN paid_at >= ? THEN paid_amount_cents ELSE 0 END) as week_amount_cents,
+       SUM(CASE WHEN paid_at >= ? THEN paid_amount_cents ELSE 0 END) as month_amount_cents,
+       SUM(CASE WHEN paid_at >= ? THEN points ELSE 0 END) as today_points,
+       SUM(CASE WHEN paid_at >= ? THEN points ELSE 0 END) as week_points,
+       SUM(CASE WHEN paid_at >= ? THEN points ELSE 0 END) as month_points
+     FROM payment_orders
+     WHERE status = 'succeeded'`,
+    [todayUTC, weekUTC, monthUTC, todayUTC, weekUTC, monthUTC]
+  );
+  const paymentRow = (paymentRows as any[])[0] || {};
+  const paymentStats: PaymentStatsSummary = {
+    todayAmountCents: Number(paymentRow.today_amount_cents || 0),
+    weekAmountCents: Number(paymentRow.week_amount_cents || 0),
+    monthAmountCents: Number(paymentRow.month_amount_cents || 0),
+    todayPoints: Number(paymentRow.today_points || 0),
+    weekPoints: Number(paymentRow.week_points || 0),
+    monthPoints: Number(paymentRow.month_points || 0),
+  };
+  const recentPaymentOrders = await getRecentPaymentOrders(50);
+
   return {
     totalUsers,
     activeUsers,
@@ -785,6 +811,8 @@ export async function getStatsOverview(days = 30): Promise<StatsOverview> {
     todayGenerations,
     dailyStats,
     generationTypes,
+    paymentStats,
+    recentPaymentOrders,
   };
 }
 

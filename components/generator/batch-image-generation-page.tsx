@@ -1,0 +1,898 @@
+'use client';
+/* eslint-disable @next/next/no-img-element */
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  CheckCircle2,
+  Download,
+  Image as ImageIcon,
+  Images,
+  Loader2,
+  Play,
+  Plus,
+  RotateCcw,
+  Sparkles,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
+import type { Generation, SafeImageModel } from '@/types';
+import { toast } from '@/components/ui/toaster';
+import { CustomSelect } from '@/components/ui/select-custom';
+import { cn, formatBalance } from '@/lib/utils';
+import { compressImageToWebP, fileToBase64 } from '@/lib/image-compression';
+import {
+  fetchGenerationSubmit,
+  pollGenerationTask,
+  type GenerationStatusPayload,
+} from '@/lib/generation-client';
+
+type BatchTaskStatus =
+  | 'idle'
+  | 'submitting'
+  | 'pending'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+
+type BatchImageItem = {
+  id: string;
+  file: File;
+  preview: string;
+};
+
+type BatchTask = {
+  id: string;
+  prompt: string;
+  images: BatchImageItem[];
+  status: BatchTaskStatus;
+  progress: number;
+  modelId?: string;
+  generationId?: string;
+  resultUrl?: string;
+  cost?: number;
+  error?: string;
+};
+
+type DailyUsagePayload = {
+  usage?: { imageCount?: number };
+  limits?: { imageLimit?: number };
+};
+
+const MAX_IMAGES_PER_TASK = 6;
+const DEFAULT_TASK_COUNT = 6;
+const SUBMIT_PARALLELISM = 3;
+const GLOBAL_MODEL_VALUE = '__global__';
+
+function createId(prefix: string): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createEmptyTask(index?: number): BatchTask {
+  return {
+    id: createId(`task-${index ?? 'new'}`),
+    prompt: '',
+    images: [],
+    status: 'idle',
+    progress: 0,
+  };
+}
+
+function statusLabel(status: BatchTaskStatus): string {
+  const labels: Record<BatchTaskStatus, string> = {
+    idle: '\u5f85\u5f00\u59cb',
+    submitting: '\u63d0\u4ea4\u4e2d',
+    pending: '\u6392\u961f\u4e2d',
+    processing: '\u751f\u6210\u4e2d',
+    completed: '\u5df2\u5b8c\u6210',
+    failed: '\u5931\u8d25',
+  };
+  return labels[status];
+}
+
+function statusClass(status: BatchTaskStatus): string {
+  if (status === 'completed') return 'bg-emerald-500/15 text-emerald-300 border-emerald-500/25';
+  if (status === 'failed') return 'bg-red-500/15 text-red-300 border-red-500/25';
+  if (status === 'processing') return 'bg-sky-500/15 text-sky-300 border-sky-500/25';
+  if (status === 'pending' || status === 'submitting') return 'bg-amber-500/15 text-amber-300 border-amber-500/25';
+  return 'bg-card/70 text-foreground/50 border-border/70';
+}
+
+function modelSupportsTask(model: SafeImageModel | undefined, task: BatchTask): boolean {
+  if (!model) return false;
+  const hasImages = task.images.length > 0;
+  if (hasImages && !model.features.imageToImage) return false;
+  if (model.requiresReferenceImage && !hasImages) return false;
+  if (!model.allowEmptyPrompt && !task.prompt.trim() && !hasImages) return false;
+  return true;
+}
+
+function resolveTaskModel(
+  models: SafeImageModel[],
+  defaultModelId: string,
+  task: BatchTask
+): SafeImageModel | undefined {
+  return models.find((model) => model.id === (task.modelId || defaultModelId));
+}
+
+function resolveTaskAspectRatio(model: SafeImageModel, preferredAspectRatio: string): string {
+  if (model.aspectRatios.includes(preferredAspectRatio)) return preferredAspectRatio;
+  return model.defaultAspectRatio || model.aspectRatios[0] || '1:1';
+}
+
+function resolveTaskImageSize(model: SafeImageModel, preferredImageSize: string): string | undefined {
+  if (!model.features.imageSize) return undefined;
+  if (model.imageSizes?.includes(preferredImageSize)) return preferredImageSize;
+  return model.defaultImageSize || model.imageSizes?.[0] || preferredImageSize;
+}
+
+async function compressTaskImages(images: BatchImageItem[]): Promise<Array<{ mimeType: string; data: string }>> {
+  const compressed: Array<{ mimeType: string; data: string }> = [];
+
+  for (const image of images) {
+    const compressedFile = await compressImageToWebP(image.file);
+    const base64 = await fileToBase64(compressedFile);
+    compressed.push({
+      mimeType: 'image/jpeg',
+      data: `data:image/jpeg;base64,${base64}`,
+    });
+  }
+
+  return compressed;
+}
+
+async function downloadUrl(url: string, filename: string) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(objectUrl);
+}
+
+export function BatchImageGenerationPage() {
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const fileInputRefs = useRef<Map<string, HTMLInputElement | null>>(new Map());
+  const [models, setModels] = useState<SafeImageModel[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(true);
+  const [selectedModelId, setSelectedModelId] = useState('');
+  const [aspectRatio, setAspectRatio] = useState('1:1');
+  const [imageSize, setImageSize] = useState('1K');
+  const [tasks, setTasks] = useState<BatchTask[]>(() =>
+    Array.from({ length: DEFAULT_TASK_COUNT }, (_, index) => createEmptyTask(index + 1))
+  );
+  const [promptImport, setPromptImport] = useState('');
+  const [submittingAll, setSubmittingAll] = useState(false);
+  const [dailyUsage, setDailyUsage] = useState({ imageCount: 0, imageLimit: 0 });
+  const [error, setError] = useState('');
+
+  const currentModel = useMemo(
+    () => models.find((model) => model.id === selectedModelId),
+    [models, selectedModelId]
+  );
+
+  const runnableTasks = useMemo(
+    () =>
+      tasks.filter((task) =>
+        modelSupportsTask(resolveTaskModel(models, selectedModelId, task), task)
+      ),
+    [models, selectedModelId, tasks]
+  );
+
+  const completedTasks = tasks.filter((task) => task.status === 'completed');
+  const runningCount = tasks.filter((task) =>
+    ['submitting', 'pending', 'processing'].includes(task.status)
+  ).length;
+  const totalCost = completedTasks.reduce((sum, task) => sum + (task.cost || 0), 0);
+  const remainingDaily = dailyUsage.imageLimit > 0
+    ? Math.max(0, dailyUsage.imageLimit - dailyUsage.imageCount)
+    : Infinity;
+
+  const updateTask = useCallback((taskId: string, patch: Partial<BatchTask>) => {
+    setTasks((current) =>
+      current.map((task) => (task.id === taskId ? { ...task, ...patch } : task))
+    );
+  }, []);
+
+  const loadModels = useCallback(async () => {
+    try {
+      setModelsLoading(true);
+      const response = await fetch('/api/image-models', { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || 'Failed to load models');
+
+      const availableModels = (payload.data?.models || []) as SafeImageModel[];
+      setModels(availableModels);
+      if (availableModels.length > 0) {
+        const first = availableModels[0];
+        setSelectedModelId(first.id);
+        setAspectRatio(first.defaultAspectRatio || first.aspectRatios[0] || '1:1');
+        setImageSize(first.defaultImageSize || first.imageSizes?.[0] || '1K');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load models');
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
+  const loadDailyUsage = useCallback(async () => {
+    try {
+      const response = await fetch('/api/user/daily-usage', { cache: 'no-store' });
+      if (!response.ok) return;
+      const payload = await response.json();
+      const data = (payload.data || {}) as DailyUsagePayload;
+      setDailyUsage({
+        imageCount: Number(data.usage?.imageCount || 0),
+        imageLimit: Number(data.limits?.imageLimit || 0),
+      });
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadModels();
+    void loadDailyUsage();
+    const abortControllers = abortControllersRef.current;
+
+    return () => {
+      abortControllers.forEach((controller) => controller.abort());
+      tasks.forEach((task) => task.images.forEach((image) => URL.revokeObjectURL(image.preview)));
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadDailyUsage, loadModels]);
+
+  const handleModelChange = (modelId: string) => {
+    const model = models.find((item) => item.id === modelId);
+    setSelectedModelId(modelId);
+    if (model) {
+      setAspectRatio(model.defaultAspectRatio || model.aspectRatios[0] || '1:1');
+      setImageSize(model.defaultImageSize || model.imageSizes?.[0] || '1K');
+    }
+  };
+
+  const applyModelToAllTasks = () => {
+    if (!selectedModelId) return;
+    setTasks((current) =>
+      current.map((task) => ({
+        ...task,
+        modelId: selectedModelId,
+      }))
+    );
+    toast({ title: '\u5df2\u5c06\u7edf\u4e00\u6a21\u578b\u5e94\u7528\u5230\u5168\u90e8\u4efb\u52a1' });
+  };
+
+  const addTask = () => {
+    setTasks((current) => [...current, createEmptyTask(current.length + 1)]);
+  };
+
+  const removeTask = (taskId: string) => {
+    if (tasks.length <= 1) return;
+    const task = tasks.find((item) => item.id === taskId);
+    task?.images.forEach((image) => URL.revokeObjectURL(image.preview));
+    abortControllersRef.current.get(taskId)?.abort();
+    abortControllersRef.current.delete(taskId);
+    setTasks((current) => current.filter((item) => item.id !== taskId));
+  };
+
+  const clearAll = () => {
+    abortControllersRef.current.forEach((controller) => controller.abort());
+    abortControllersRef.current.clear();
+    tasks.forEach((task) => task.images.forEach((image) => URL.revokeObjectURL(image.preview)));
+    setTasks(Array.from({ length: DEFAULT_TASK_COUNT }, (_, index) => createEmptyTask(index + 1)));
+    setPromptImport('');
+    setError('');
+  };
+
+  const applyPromptImport = () => {
+    const prompts = promptImport
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (prompts.length === 0) {
+      toast({ title: '\u8bf7\u5148\u8f93\u5165\u63d0\u793a\u8bcd' });
+      return;
+    }
+
+    setTasks((current) => {
+      const next = [...current];
+      while (next.length < prompts.length) {
+        next.push(createEmptyTask(next.length + 1));
+      }
+      return next.map((task, index) =>
+        index < prompts.length
+          ? { ...task, prompt: prompts[index], status: 'idle', progress: 0, error: undefined }
+          : task
+      );
+    });
+
+    toast({
+      title: '\u5df2\u5bfc\u5165\u63d0\u793a\u8bcd',
+      description: `${prompts.length} \u4e2a\u6279\u91cf\u4efb\u52a1\u5df2\u51c6\u5907`,
+    });
+  };
+
+  const addFilesToTask = (taskId: string, files: File[]) => {
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+    if (imageFiles.length === 0) return;
+
+    setTasks((current) =>
+      current.map((task) => {
+        if (task.id !== taskId) return task;
+        const availableSlots = Math.max(0, MAX_IMAGES_PER_TASK - task.images.length);
+        const nextImages = imageFiles.slice(0, availableSlots).map((file) => ({
+          id: createId('image'),
+          file,
+          preview: URL.createObjectURL(file),
+        }));
+        return { ...task, images: [...task.images, ...nextImages] };
+      })
+    );
+  };
+
+  const removeImageFromTask = (taskId: string, imageId: string) => {
+    setTasks((current) =>
+      current.map((task) => {
+        if (task.id !== taskId) return task;
+        const target = task.images.find((image) => image.id === imageId);
+        if (target) URL.revokeObjectURL(target.preview);
+        return { ...task, images: task.images.filter((image) => image.id !== imageId) };
+      })
+    );
+  };
+
+  const pollTask = useCallback(
+    async (task: BatchTask, generationId: string) => {
+      const controller = new AbortController();
+      abortControllersRef.current.set(task.id, controller);
+
+      try {
+        await pollGenerationTask({
+          taskId: generationId,
+          taskPrompt: task.prompt,
+          taskType: 'image',
+          signal: controller.signal,
+          onProgress: (payload: GenerationStatusPayload) => {
+            updateTask(task.id, {
+              status: payload.status === 'processing' ? 'processing' : 'pending',
+              progress: typeof payload.progress === 'number' ? payload.progress : 0,
+            });
+          },
+          onCompleted: async (generation: Generation) => {
+            updateTask(task.id, {
+              status: 'completed',
+              progress: 100,
+              resultUrl: generation.resultUrl,
+              cost: generation.cost,
+              error: undefined,
+            });
+            setDailyUsage((current) => ({ ...current, imageCount: current.imageCount + 1 }));
+          },
+          onFailed: async (message: string) => {
+            updateTask(task.id, { status: 'failed', error: message, progress: 0 });
+          },
+          onTimeout: async () => {
+            updateTask(task.id, {
+              status: 'failed',
+              error: '\u4efb\u52a1\u67e5\u8be2\u8d85\u65f6\uff0c\u8bf7\u5230\u5386\u53f2\u8bb0\u5f55\u67e5\u770b\u6700\u7ec8\u7ed3\u679c',
+              progress: 0,
+            });
+          },
+        });
+      } finally {
+        abortControllersRef.current.delete(task.id);
+      }
+    },
+    [updateTask]
+  );
+
+  const submitTask = useCallback(
+    async (task: BatchTask) => {
+      const taskModel = resolveTaskModel(models, selectedModelId, task);
+      if (!taskModel) throw new Error('\u8bf7\u5148\u9009\u62e9\u6a21\u578b');
+      if (!modelSupportsTask(taskModel, task)) {
+        throw new Error('\u4efb\u52a1\u7f3a\u5c11\u63d0\u793a\u8bcd\u6216\u53c2\u8003\u56fe');
+      }
+
+      const taskAspectRatio = resolveTaskAspectRatio(taskModel, aspectRatio);
+      const taskImageSize = resolveTaskImageSize(taskModel, imageSize);
+
+      updateTask(task.id, {
+        status: 'submitting',
+        progress: 0,
+        error: undefined,
+        resultUrl: undefined,
+        generationId: undefined,
+      });
+
+      const images = await compressTaskImages(task.images);
+      const response = await fetchGenerationSubmit('/api/generate/image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelId: taskModel.id,
+          prompt: task.prompt.trim(),
+          aspectRatio: taskAspectRatio,
+          imageSize: taskImageSize,
+          images,
+          clientRequestId: createId('batch-image'),
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || '\u751f\u6210\u4efb\u52a1\u63d0\u4ea4\u5931\u8d25');
+      }
+
+      const generationId = payload.data.id as string;
+      updateTask(task.id, {
+        status: 'pending',
+        generationId,
+        progress: 0,
+      });
+      void pollTask(task, generationId);
+    },
+    [aspectRatio, imageSize, models, pollTask, selectedModelId, updateTask]
+  );
+
+  const submitTasks = useCallback(
+    async (targetTasks: BatchTask[]) => {
+      if (!selectedModelId && targetTasks.every((task) => !task.modelId)) {
+        setError('\u8bf7\u5148\u9009\u62e9\u6a21\u578b');
+        return;
+      }
+
+      const eligible = targetTasks.filter((task) =>
+        modelSupportsTask(resolveTaskModel(models, selectedModelId, task), task)
+      );
+      if (eligible.length === 0) {
+        setError('\u6ca1\u6709\u53ef\u63d0\u4ea4\u7684\u4efb\u52a1');
+        return;
+      }
+
+      if (dailyUsage.imageLimit > 0 && eligible.length > remainingDaily) {
+        setError(`\u4eca\u65e5\u5269\u4f59\u56fe\u50cf\u751f\u6210\u6b21\u6570\u4e0d\u8db3\uff0c\u5269\u4f59 ${remainingDaily} \u6b21`);
+        return;
+      }
+
+      setError('');
+      setSubmittingAll(true);
+      let cursor = 0;
+      let submitted = 0;
+
+      async function worker() {
+        while (cursor < eligible.length) {
+          const task = eligible[cursor];
+          cursor += 1;
+          try {
+            await submitTask(task);
+            submitted += 1;
+          } catch (err) {
+            updateTask(task.id, {
+              status: 'failed',
+              error: err instanceof Error ? err.message : '\u751f\u6210\u4efb\u52a1\u5931\u8d25',
+              progress: 0,
+            });
+          }
+        }
+      }
+
+      await Promise.all(Array.from({ length: Math.min(SUBMIT_PARALLELISM, eligible.length) }, worker));
+      setSubmittingAll(false);
+
+      toast({
+        title: '\u6279\u91cf\u4efb\u52a1\u5df2\u5904\u7406',
+        description: `${submitted} / ${eligible.length} \u4e2a\u4efb\u52a1\u5df2\u5b8c\u6210\u6216\u8fdb\u5165\u8f6e\u8be2`,
+      });
+    },
+    [dailyUsage.imageLimit, models, remainingDaily, selectedModelId, submitTask, updateTask]
+  );
+
+  const submitSingle = (task: BatchTask) => {
+    void submitTasks([task]);
+  };
+
+  const downloadAll = async () => {
+    const downloadable = completedTasks.filter((task) => task.resultUrl);
+    if (downloadable.length === 0) return;
+
+    for (let index = 0; index < downloadable.length; index += 1) {
+      const task = downloadable[index];
+      await downloadUrl(task.resultUrl!, `batch-image-${index + 1}.png`);
+    }
+  };
+
+  const modelOptions = models.map((model) => ({
+    value: model.id,
+    label: model.name,
+    description: model.description,
+    highlight: model.highlight,
+  }));
+
+  const aspectOptions = (currentModel?.aspectRatios || ['1:1']).map((ratio) => ({
+    value: ratio,
+    label: ratio,
+  }));
+
+  const sizeOptions = (currentModel?.imageSizes || ['1K']).map((size) => ({
+    value: size,
+    label: size,
+  }));
+
+  return (
+    <div className="mx-auto max-w-7xl space-y-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full border border-sky-500/25 bg-sky-500/10 px-3 py-1 text-xs text-sky-300">
+            <Images className="h-3.5 w-3.5" />
+            {'\u6279\u91cf\u521b\u4f5c'}
+          </div>
+          <h1 className="mt-3 text-3xl font-light text-foreground">{'\u6279\u91cf\u751f\u56fe'}</h1>
+          <p className="mt-1 text-sm text-foreground/50">
+            {'\u4e00\u6b21\u51c6\u5907\u591a\u4e2a\u63d0\u793a\u8bcd\u6216\u53c2\u8003\u56fe\uff0c\u6309\u961f\u5217\u6279\u91cf\u63d0\u4ea4\u751f\u6210'}
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-3 rounded-2xl border border-border/70 bg-card/50 p-3 text-center">
+          <div>
+            <p className="text-lg font-semibold text-foreground">{runnableTasks.length}</p>
+            <p className="text-xs text-foreground/45">{'\u53ef\u63d0\u4ea4'}</p>
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-sky-300">{runningCount}</p>
+            <p className="text-xs text-foreground/45">{'\u8fdb\u884c\u4e2d'}</p>
+          </div>
+          <div>
+            <p className="text-lg font-semibold text-emerald-300">{formatBalance(totalCost)}</p>
+            <p className="text-xs text-foreground/45">{'\u5df2\u6d88\u8017'}</p>
+          </div>
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+          {error}
+        </div>
+      )}
+
+      <section className="surface overflow-hidden">
+        <div className="border-b border-border/70 p-5">
+          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+            <Sparkles className="h-4 w-4 text-sky-300" />
+            {'\u7edf\u4e00\u8bbe\u7f6e'}
+          </div>
+        </div>
+        <div className="grid gap-4 p-5 lg:grid-cols-[minmax(220px,1.4fr)_minmax(160px,0.8fr)_minmax(160px,0.8fr)_auto] lg:items-end">
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u6a21\u578b'}</label>
+            <CustomSelect
+              value={selectedModelId}
+              onValueChange={handleModelChange}
+              options={modelOptions}
+              disabled={modelsLoading}
+              placeholder={modelsLoading ? 'Loading...' : '\u9009\u62e9\u6a21\u578b'}
+            />
+            <button
+              type="button"
+              onClick={applyModelToAllTasks}
+              disabled={!selectedModelId}
+              className="text-xs text-sky-300 transition hover:text-sky-200 disabled:cursor-not-allowed disabled:text-foreground/30"
+            >
+              {'\u5e94\u7528\u6a21\u578b\u5230\u5168\u90e8\u4efb\u52a1'}
+            </button>
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u753b\u9762\u6bd4\u4f8b'}</label>
+            <CustomSelect value={aspectRatio} onValueChange={setAspectRatio} options={aspectOptions} />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u5206\u8fa8\u7387'}</label>
+            <CustomSelect
+              value={imageSize}
+              onValueChange={setImageSize}
+              options={sizeOptions}
+              disabled={!currentModel?.features.imageSize}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => void submitTasks(tasks)}
+            disabled={submittingAll || runnableTasks.length === 0}
+            className={cn(
+              'inline-flex h-9 items-center justify-center gap-2 rounded-lg px-5 text-sm font-medium transition-all',
+              submittingAll || runnableTasks.length === 0
+                ? 'cursor-not-allowed bg-card/60 text-foreground/40'
+                : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white hover:opacity-90'
+            )}
+          >
+            {submittingAll ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+            {'\u5168\u90e8\u5f00\u59cb'}
+          </button>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {tasks.map((task, index) => (
+            <TaskCard
+              key={task.id}
+              index={index}
+              task={task}
+              modelOptions={modelOptions}
+              globalModelId={selectedModelId}
+              canRemove={tasks.length > 1}
+              fileInputRef={(node) => fileInputRefs.current.set(task.id, node)}
+              onModelChange={(modelId) =>
+                updateTask(task.id, {
+                  modelId: modelId === GLOBAL_MODEL_VALUE ? undefined : modelId,
+                })
+              }
+              onPromptChange={(prompt) => updateTask(task.id, { prompt })}
+              onAddFiles={(files) => addFilesToTask(task.id, files)}
+              onRemoveImage={(imageId) => removeImageFromTask(task.id, imageId)}
+              onRemove={() => removeTask(task.id)}
+              onStart={() => submitSingle(task)}
+            />
+          ))}
+          <button
+            type="button"
+            onClick={addTask}
+            className="min-h-[260px] rounded-2xl border border-dashed border-border/80 bg-card/30 text-foreground/45 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300"
+          >
+            <Plus className="mx-auto h-6 w-6" />
+            <span className="mt-2 block text-sm">{'\u6dfb\u52a0\u4efb\u52a1'}</span>
+          </button>
+        </div>
+
+        <aside className="space-y-4">
+          <div className="surface overflow-hidden">
+            <div className="border-b border-border/70 p-4">
+              <h2 className="text-sm font-medium text-foreground">{'\u6279\u91cf\u5bfc\u5165'}</h2>
+              <p className="mt-1 text-xs text-foreground/40">{'\u6bcf\u884c\u4e00\u4e2a\u63d0\u793a\u8bcd\uff0c\u81ea\u52a8\u5206\u914d\u5230\u4efb\u52a1\u5361'}</p>
+            </div>
+            <div className="space-y-3 p-4">
+              <textarea
+                value={promptImport}
+                onChange={(event) => setPromptImport(event.target.value)}
+                rows={8}
+                placeholder={'\u672a\u6765\u57ce\u5e02\u591c\u666f\n\u4e2d\u5f0f\u8282\u65e5\u6d77\u62a5\n\u4ea7\u54c1\u6444\u5f71\uff0c\u767d\u8272\u80cc\u666f'}
+                className="w-full resize-none rounded-xl border border-border/70 bg-input/70 px-3 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
+              />
+              <button
+                type="button"
+                onClick={applyPromptImport}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-border/70 bg-card/60 px-4 py-2.5 text-sm text-foreground transition hover:bg-card/80"
+              >
+                <Upload className="h-4 w-4" />
+                {'\u5e94\u7528\u5230\u4efb\u52a1'}
+              </button>
+            </div>
+          </div>
+
+          <div className="surface p-4">
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={clearAll}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-border/70 bg-card/60 px-4 py-2.5 text-sm text-foreground/70 transition hover:bg-card/80 hover:text-foreground"
+              >
+                <RotateCcw className="h-4 w-4" />
+                {'\u6e05\u7a7a'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadAll()}
+                disabled={completedTasks.length === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-sky-500/30 bg-sky-500/10 px-4 py-2.5 text-sm text-sky-200 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" />
+                {'\u4e0b\u8f7d'}
+              </button>
+            </div>
+            <div className="mt-4 rounded-xl border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
+              {dailyUsage.imageLimit > 0
+                ? `\u4eca\u65e5\u5df2\u7528 ${dailyUsage.imageCount} / ${dailyUsage.imageLimit} \u6b21\u56fe\u50cf\u751f\u6210`
+                : '\u4eca\u65e5\u56fe\u50cf\u751f\u6210\u6b21\u6570\u672a\u8bbe\u9650'}
+            </div>
+          </div>
+        </aside>
+      </section>
+    </div>
+  );
+}
+
+type TaskCardProps = {
+  index: number;
+  task: BatchTask;
+  modelOptions: Array<{ value: string; label: string; description?: string; highlight?: boolean }>;
+  globalModelId: string;
+  canRemove: boolean;
+  fileInputRef: (node: HTMLInputElement | null) => void;
+  onModelChange: (modelId: string) => void;
+  onPromptChange: (prompt: string) => void;
+  onAddFiles: (files: File[]) => void;
+  onRemoveImage: (imageId: string) => void;
+  onRemove: () => void;
+  onStart: () => void;
+};
+
+function TaskCard({
+  index,
+  task,
+  modelOptions,
+  globalModelId,
+  canRemove,
+  fileInputRef,
+  onModelChange,
+  onPromptChange,
+  onAddFiles,
+  onRemoveImage,
+  onRemove,
+  onStart,
+}: TaskCardProps) {
+  const isBusy = ['submitting', 'pending', 'processing'].includes(task.status);
+  const taskModelOptions = [
+    {
+      value: GLOBAL_MODEL_VALUE,
+      label: '\u8ddf\u968f\u7edf\u4e00\u6a21\u578b',
+      description: globalModelId ? undefined : '\u8bf7\u5148\u9009\u62e9\u7edf\u4e00\u6a21\u578b',
+    },
+    ...modelOptions,
+  ];
+
+  return (
+    <div
+      className={cn(
+        'rounded-2xl border bg-card/55 p-4 shadow-sm transition',
+        task.status === 'completed'
+          ? 'border-emerald-500/35'
+          : task.status === 'failed'
+            ? 'border-red-500/35'
+            : isBusy
+              ? 'border-sky-500/35'
+              : 'border-border/70 hover:border-border'
+      )}
+    >
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <h3 className="text-sm font-semibold text-foreground">{`\u4efb\u52a1 ${index + 1}`}</h3>
+          <span className={cn('rounded-full border px-2 py-0.5 text-[11px]', statusClass(task.status))}>
+            {statusLabel(task.status)}
+          </span>
+        </div>
+        {canRemove && (
+          <button
+            type="button"
+            onClick={onRemove}
+            className="rounded-lg p-1.5 text-foreground/40 transition hover:bg-card/80 hover:text-foreground"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        )}
+      </div>
+
+      <div className="mb-3 space-y-2">
+        <label className="text-xs uppercase tracking-wider text-foreground/45">{'\u6a21\u578b'}</label>
+        <CustomSelect
+          value={task.modelId || GLOBAL_MODEL_VALUE}
+          onValueChange={onModelChange}
+          options={taskModelOptions}
+          disabled={isBusy}
+          placeholder={'\u9009\u62e9\u6a21\u578b'}
+        />
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          onAddFiles(Array.from(event.target.files || []));
+          event.target.value = '';
+        }}
+      />
+
+      <div className="grid grid-cols-3 gap-2">
+        {Array.from({ length: Math.max(3, Math.min(MAX_IMAGES_PER_TASK, task.images.length + 1)) }).map((_, slotIndex) => {
+          const image = task.images[slotIndex];
+          return image ? (
+            <div key={image.id} className="group relative aspect-square overflow-hidden rounded-xl border border-border/70 bg-card/60">
+              <img src={image.preview} alt="" className="h-full w-full object-cover" />
+              <button
+                type="button"
+                onClick={() => onRemoveImage(image.id)}
+                className="absolute right-1 top-1 rounded-md bg-black/55 p-1 text-white opacity-0 transition group-hover:opacity-100"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              key={`slot-${slotIndex}`}
+              type="button"
+              onClick={() => {
+                const input = document.querySelector<HTMLInputElement>(
+                  `input[data-batch-task-id="${task.id}"]`
+                );
+                input?.click();
+              }}
+              className="aspect-square rounded-xl border-2 border-dashed border-border/70 bg-input/40 text-foreground/40 transition hover:border-sky-400/50 hover:bg-sky-500/10 hover:text-sky-300"
+            >
+              <Plus className="mx-auto h-5 w-5" />
+            </button>
+          );
+        })}
+      </div>
+      <input
+        data-batch-task-id={task.id}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(event) => {
+          onAddFiles(Array.from(event.target.files || []));
+          event.target.value = '';
+        }}
+      />
+
+      <textarea
+        value={task.prompt}
+        onChange={(event) => onPromptChange(event.target.value)}
+        rows={3}
+        placeholder={'\u8f93\u5165\u63d0\u793a\u8bcd...'}
+        className="mt-3 w-full resize-none rounded-xl border border-border/70 bg-input/70 px-3 py-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground/60 focus:border-border focus:ring-2 focus:ring-ring/30"
+      />
+
+      {task.error && (
+        <p className="mt-2 line-clamp-2 text-xs text-red-300">{task.error}</p>
+      )}
+
+      {task.resultUrl && (
+        <a
+          href={task.resultUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 block overflow-hidden rounded-xl border border-border/70 bg-card/60"
+        >
+          <img src={task.resultUrl} alt="" className="aspect-video w-full object-cover" />
+        </a>
+      )}
+
+      {isBusy && (
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-card/80">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-sky-400 to-emerald-400 transition-all"
+            style={{ width: `${Math.max(8, task.progress || 8)}%` }}
+          />
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onStart}
+        disabled={isBusy}
+        className={cn(
+          'mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg px-5 text-sm font-medium transition-all',
+          isBusy
+            ? 'cursor-not-allowed bg-card/60 text-foreground/40'
+            : 'bg-gradient-to-r from-sky-500 to-emerald-500 text-white hover:opacity-90'
+        )}
+      >
+        {task.status === 'completed' ? <CheckCircle2 className="h-4 w-4" /> : isBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <ImageIcon className="h-4 w-4" />}
+        {task.status === 'completed' ? '\u91cd\u65b0\u751f\u6210' : '\u5f00\u59cb'}
+      </button>
+    </div>
+  );
+}
+
+export default BatchImageGenerationPage;

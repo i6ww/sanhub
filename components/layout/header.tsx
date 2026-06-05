@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { LogOut, History, Shield, LayoutGrid, Sparkles, User, Workflow } from 'lucide-react';
+import { LogOut, History, Shield, LayoutGrid, Sparkles, User, Workflow, Images } from 'lucide-react';
 import type { SafeUser } from '@/types';
 import { cn } from '@/lib/utils';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
@@ -16,6 +16,7 @@ interface HeaderProps {
 // 移动端底部导航项
 const mobileNavItems = [
   { href: '/create', icon: Sparkles, label: '创作' },
+  { href: '/batch-image', icon: Images, label: '\u6279\u91cf' },
   { href: '/workspace', icon: Workflow, label: '工作流' },
   { href: '/square', icon: LayoutGrid, label: '广场' },
   { href: '/history', icon: History, label: '历史' },

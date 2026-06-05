@@ -489,6 +489,33 @@ export interface PaymentOrder {
   updatedAt: number;
 }
 
+export interface PaymentOrderSummary extends PaymentOrder {
+  userEmail?: string;
+  userName?: string;
+}
+
+export interface ConsumptionRecord {
+  id: string;
+  generationId: string;
+  type: GenerationType;
+  prompt: string;
+  cost: number;
+  netCost: number;
+  refunded: boolean;
+  status: Generation['status'];
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PaymentStatsSummary {
+  todayAmountCents: number;
+  weekAmountCents: number;
+  monthAmountCents: number;
+  todayPoints: number;
+  weekPoints: number;
+  monthPoints: number;
+}
+
 export type GenerationJobStatus =
   | 'queued'
   | 'running'
@@ -729,6 +756,8 @@ export interface StatsOverview {
   todayGenerations: number;
   dailyStats: DailyStats[];
   generationTypes: GenerationTypeStat[];
+  paymentStats: PaymentStatsSummary;
+  recentPaymentOrders: PaymentOrderSummary[];
 }
 
 // ========================================

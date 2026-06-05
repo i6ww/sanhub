@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useSession, signOut } from 'next-auth/react';
 import { useSearchParams } from 'next/navigation';
-import { User, Key, LogOut, Loader2, Check, Mail, Shield, Coins, Gift, UserPlus, Copy, Ticket, CreditCard } from 'lucide-react';
+import { User, Key, LogOut, Loader2, Check, Mail, Shield, Coins, Gift, UserPlus, Copy, Ticket, CreditCard, ReceiptText, ShoppingBag } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import { formatBalance } from '@/lib/utils';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
+import type { ConsumptionRecord, PaymentOrder } from '@/types';
 
 interface PublicPaymentConfig {
   enabled: boolean;
@@ -15,6 +16,53 @@ interface PublicPaymentConfig {
   amountOptions: number[];
   amountDiscounts: Record<string, number>;
   minAmountCny: number;
+}
+
+interface FinanceRecords {
+  paymentOrders: PaymentOrder[];
+  consumptionRecords: ConsumptionRecord[];
+}
+
+function formatCurrency(cents: number): string {
+  return `¥${(Math.max(0, Number(cents) || 0) / 100).toFixed(2)}`;
+}
+
+function formatDateTime(value?: number): string {
+  if (!value) return '-';
+  return new Date(value).toLocaleString('zh-CN', { hour12: false });
+}
+
+function paymentStatusLabel(status: PaymentOrder['status']): string {
+  if (status === 'succeeded') return '\u5df2\u652f\u4ed8';
+  if (status === 'failed') return '\u5931\u8d25';
+  return '\u5f85\u652f\u4ed8';
+}
+
+function paymentStatusClass(status: PaymentOrder['status']): string {
+  if (status === 'succeeded') return 'text-emerald-300';
+  if (status === 'failed') return 'text-red-300';
+  return 'text-amber-300';
+}
+
+function consumptionStatusLabel(status: ConsumptionRecord['status']): string {
+  if (status === 'completed') return '\u5df2\u5b8c\u6210';
+  if (status === 'failed') return '\u5931\u8d25';
+  if (status === 'cancelled') return '\u5df2\u53d6\u6d88';
+  if (status === 'processing') return '\u5904\u7406\u4e2d';
+  return '\u6392\u961f\u4e2d';
+}
+
+function generationTypeLabel(type: ConsumptionRecord['type']): string {
+  const labels: Record<ConsumptionRecord['type'], string> = {
+    'sora-video': 'Sora \u89c6\u9891',
+    'sora-image': 'Sora \u56fe\u50cf',
+    'gemini-image': 'Gemini \u56fe\u50cf',
+    'zimage-image': 'Z-Image \u56fe\u50cf',
+    'gitee-image': 'Gitee \u56fe\u50cf',
+    chat: 'Chat',
+    'character-card': '\u89d2\u8272\u5361',
+  };
+  return labels[type] || type;
 }
 
 export default function SettingsPage() {
@@ -33,6 +81,11 @@ export default function SettingsPage() {
   const [rechargeAmount, setRechargeAmount] = useState(10);
   const [paymentType, setPaymentType] = useState('alipay');
   const [paymentLoading, setPaymentLoading] = useState(false);
+  const [financeRecords, setFinanceRecords] = useState<FinanceRecords>({
+    paymentOrders: [],
+    consumptionRecords: [],
+  });
+  const [financeLoading, setFinanceLoading] = useState(false);
   
   // Invite code
   const [inviteCode, setInviteCode] = useState('');
@@ -52,6 +105,12 @@ export default function SettingsPage() {
   useEffect(() => {
     loadPaymentConfig();
   }, []);
+
+  useEffect(() => {
+    if (session?.user?.id) {
+      loadFinanceRecords();
+    }
+  }, [session?.user?.id]);
 
   useEffect(() => {
     const paymentResult = searchParams.get('payment');
@@ -163,6 +222,24 @@ export default function SettingsPage() {
       });
     } finally {
       setRedeemLoading(false);
+    }
+  };
+
+  const loadFinanceRecords = async () => {
+    try {
+      setFinanceLoading(true);
+      const res = await fetch('/api/user/finance', { cache: 'no-store' });
+      if (!res.ok) return;
+
+      const data = await res.json();
+      setFinanceRecords({
+        paymentOrders: data.data?.paymentOrders || [],
+        consumptionRecords: data.data?.consumptionRecords || [],
+      });
+    } catch {
+      // ignore
+    } finally {
+      setFinanceLoading(false);
     }
   };
 
@@ -452,6 +529,116 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {/* Finance Records Card */}
+      <div className="surface overflow-hidden">
+        <div className="p-6 border-b border-border/70">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-card/60 border border-border/70 rounded-xl flex items-center justify-center">
+                <ReceiptText className="w-5 h-5 text-foreground" />
+              </div>
+              <div>
+                <h2 className="text-lg font-medium text-foreground">{'\u8d26\u5355\u8bb0\u5f55'}</h2>
+                <p className="text-sm text-foreground/40">{'\u67e5\u770b\u6700\u8fd1\u7684\u5145\u503c\u548c\u6d88\u8d39\u8bb0\u5f55'}</p>
+              </div>
+            </div>
+            {financeLoading && <Loader2 className="w-4 h-4 animate-spin text-foreground/40" />}
+          </div>
+        </div>
+        <div className="p-6 space-y-6">
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <CreditCard className="w-4 h-4 text-sky-300" />
+              <span>{'\u5145\u503c\u8bb0\u5f55'}</span>
+            </div>
+            {financeRecords.paymentOrders.length === 0 ? (
+              <div className="rounded-xl border border-border/70 bg-card/40 px-4 py-6 text-center text-sm text-foreground/40">
+                {'\u6682\u65e0\u5145\u503c\u8bb0\u5f55'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto no-scrollbar rounded-xl border border-border/70">
+                <table className="w-full min-w-[680px]">
+                  <thead className="bg-card/60">
+                    <tr className="border-b border-border/70">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-foreground/50">{'\u8ba2\u5355\u53f7'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u5b9e\u4ed8'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u5230\u8d26\u79ef\u5206'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u72b6\u6001'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u65f6\u95f4'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {financeRecords.paymentOrders.map((order) => (
+                      <tr key={order.id} className="border-b border-border/70 last:border-0 hover:bg-card/50">
+                        <td className="px-4 py-3 font-mono text-xs text-foreground/70">{order.outTradeNo}</td>
+                        <td className="px-4 py-3 text-right text-sm text-foreground">{formatCurrency(order.paidAmountCents)}</td>
+                        <td className="px-4 py-3 text-right text-sm text-emerald-300">+{formatBalance(order.points)}</td>
+                        <td className={`px-4 py-3 text-right text-sm ${paymentStatusClass(order.status)}`}>
+                          {paymentStatusLabel(order.status)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-xs text-foreground/50">
+                          {formatDateTime(order.paidAt || order.createdAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <ShoppingBag className="w-4 h-4 text-orange-300" />
+              <span>{'\u6d88\u8d39\u8bb0\u5f55'}</span>
+            </div>
+            {financeRecords.consumptionRecords.length === 0 ? (
+              <div className="rounded-xl border border-border/70 bg-card/40 px-4 py-6 text-center text-sm text-foreground/40">
+                {'\u6682\u65e0\u6d88\u8d39\u8bb0\u5f55'}
+              </div>
+            ) : (
+              <div className="overflow-x-auto no-scrollbar rounded-xl border border-border/70">
+                <table className="w-full min-w-[720px]">
+                  <thead className="bg-card/60">
+                    <tr className="border-b border-border/70">
+                      <th className="px-4 py-3 text-left text-xs font-medium text-foreground/50">{'\u7c7b\u578b'}</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-foreground/50">{'\u63d0\u793a\u8bcd'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u6d88\u8017'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u72b6\u6001'}</th>
+                      <th className="px-4 py-3 text-right text-xs font-medium text-foreground/50">{'\u65f6\u95f4'}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {financeRecords.consumptionRecords.map((record) => (
+                      <tr key={record.id} className="border-b border-border/70 last:border-0 hover:bg-card/50">
+                        <td className="px-4 py-3 text-sm text-foreground/70">{generationTypeLabel(record.type)}</td>
+                        <td className="max-w-[280px] truncate px-4 py-3 text-sm text-foreground/70" title={record.prompt}>
+                          {record.prompt || '-'}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm">
+                          <span className={record.refunded ? 'text-foreground/40 line-through' : 'text-orange-300'}>
+                            -{formatBalance(record.cost)}
+                          </span>
+                          {record.refunded && (
+                            <span className="ml-2 text-xs text-emerald-300">{'\u5df2\u9000\u8fd8'}</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-foreground/60">
+                          {consumptionStatusLabel(record.status)}
+                        </td>
+                        <td className="px-4 py-3 text-right text-xs text-foreground/50">
+                          {formatDateTime(record.createdAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
 
       {/* Invite Code Card */}
       {siteConfig.inviteEnabled && (

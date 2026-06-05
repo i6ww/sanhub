@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder, GenerationJob, GenerationQueueConfig } from '@/types';
+import type { User, Generation, SystemConfig, SafeUser, PricingConfig, ChatModel, ChatSession, ChatMessage, CharacterCard, Workspace, WorkspaceData, WorkspaceSummary, ImageBucketConfig, ImageStorageConfig, EmailVerificationConfig, PaymentConfig, PaymentOrder, PaymentOrderSummary, ConsumptionRecord, GenerationJob, GenerationQueueConfig } from '@/types';
 import { generateId } from './utils';
 import bcrypt from 'bcryptjs';
 import { createDatabaseAdapter, type DatabaseAdapter } from './db-adapter';
@@ -1085,6 +1085,49 @@ export async function getPaymentOrderByOutTradeNo(
   return orders[0] ? mapPaymentOrder(orders[0]) : null;
 }
 
+export async function getUserPaymentOrders(
+  userId: string,
+  limit = 20,
+  offset = 0
+): Promise<PaymentOrder[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(Number(limit) || 20, 1);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const [rows] = await db.execute(
+    `SELECT * FROM payment_orders
+     WHERE user_id = ?
+     ORDER BY created_at DESC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    [userId]
+  );
+
+  return (rows as any[]).map(mapPaymentOrder);
+}
+
+export async function getRecentPaymentOrders(
+  limit = 50,
+  offset = 0
+): Promise<PaymentOrderSummary[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(Number(limit) || 50, 1);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const [rows] = await db.execute(
+    `SELECT p.*, u.email as user_email, u.name as user_name
+     FROM payment_orders p
+     LEFT JOIN users u ON p.user_id = u.id
+     ORDER BY p.created_at DESC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`
+  );
+
+  return (rows as any[]).map((row) => ({
+    ...mapPaymentOrder(row),
+    userEmail: row.user_email || undefined,
+    userName: row.user_name || undefined,
+  }));
+}
+
 export async function completePaymentOrder(input: {
   outTradeNo: string;
   providerTradeNo?: string;
@@ -1598,7 +1641,43 @@ export async function getUserGenerations(
   }));
 }
 
-// 获取用户正在进行的任务（pending 或 processing）
+export async function getUserConsumptionRecords(
+  userId: string,
+  limit = 20,
+  offset = 0
+): Promise<ConsumptionRecord[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(Number(limit) || 20, 1);
+  const safeOffset = Math.max(Number(offset) || 0, 0);
+  const [rows] = await db.execute(
+    `SELECT id, type, prompt, cost, balance_refunded, status, created_at, updated_at
+     FROM generations
+     WHERE user_id = ? AND cost > 0 AND balance_precharged = 1
+     ORDER BY created_at DESC
+     LIMIT ${safeLimit} OFFSET ${safeOffset}`,
+    [userId]
+  );
+
+  return (rows as any[]).map((row) => {
+    const cost = Number(row.cost) || 0;
+    const refunded = Boolean(row.balance_refunded);
+    return {
+      id: row.id,
+      generationId: row.id,
+      type: row.type,
+      prompt: row.prompt || '',
+      cost,
+      netCost: refunded ? 0 : cost,
+      refunded,
+      status: row.status || 'completed',
+      createdAt: Number(row.created_at),
+      updatedAt: Number(row.updated_at || row.created_at),
+    };
+  });
+}
+
+// Get in-progress user generations.
 export async function getPendingGenerations(userId: string, limit = 50): Promise<Generation[]> {
   await initializeDatabase();
   const db = getAdapter();
