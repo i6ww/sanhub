@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { signOut } from 'next-auth/react';
-import { LogOut, History, Shield, LayoutGrid, Sparkles, User, Workflow, Images } from 'lucide-react';
+import { LogOut, History, Shield, LayoutGrid, Sparkles, User, Workflow, Images, CreditCard } from 'lucide-react';
 import type { SafeUser } from '@/types';
 import { cn } from '@/lib/utils';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
@@ -20,6 +20,7 @@ const mobileNavItems = [
   { href: '/workspace', icon: Workflow, label: '工作流' },
   { href: '/square', icon: LayoutGrid, label: '广场' },
   { href: '/history', icon: History, label: '历史' },
+  { href: '/recharge', icon: CreditCard, label: '充值' },
   { href: '/settings', icon: User, label: '我的' },
 ];
 

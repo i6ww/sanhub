@@ -2,21 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { useSession, signOut } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
 import { User, Key, LogOut, Loader2, Check, Mail, Shield, Coins, Gift, UserPlus, Copy, Ticket, CreditCard, ReceiptText, ShoppingBag } from 'lucide-react';
 import { toast } from '@/components/ui/toaster';
 import { formatBalance } from '@/lib/utils';
 import { useSiteConfig } from '@/components/providers/site-config-provider';
 import type { ConsumptionRecord, PaymentOrder } from '@/types';
-
-interface PublicPaymentConfig {
-  enabled: boolean;
-  pointsPerCny: number;
-  methods: { color: string; name: string; type: string }[];
-  amountOptions: number[];
-  amountDiscounts: Record<string, number>;
-  minAmountCny: number;
-}
 
 interface FinanceRecords {
   paymentOrders: PaymentOrder[];
@@ -67,7 +57,6 @@ function generationTypeLabel(type: ConsumptionRecord['type']): string {
 
 export default function SettingsPage() {
   const { data: session, update: updateSession } = useSession();
-  const searchParams = useSearchParams();
   const siteConfig = useSiteConfig();
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -77,10 +66,6 @@ export default function SettingsPage() {
   // Redemption code
   const [redeemCode, setRedeemCode] = useState('');
   const [redeemLoading, setRedeemLoading] = useState(false);
-  const [paymentConfig, setPaymentConfig] = useState<PublicPaymentConfig | null>(null);
-  const [rechargeAmount, setRechargeAmount] = useState(10);
-  const [paymentType, setPaymentType] = useState('alipay');
-  const [paymentLoading, setPaymentLoading] = useState(false);
   const [financeRecords, setFinanceRecords] = useState<FinanceRecords>({
     paymentOrders: [],
     consumptionRecords: [],
@@ -103,41 +88,10 @@ export default function SettingsPage() {
   }, [siteConfig.inviteEnabled]);
 
   useEffect(() => {
-    loadPaymentConfig();
-  }, []);
-
-  useEffect(() => {
     if (session?.user?.id) {
       loadFinanceRecords();
     }
   }, [session?.user?.id]);
-
-  useEffect(() => {
-    const paymentResult = searchParams.get('payment');
-    if (!paymentResult) return;
-
-    if (paymentResult === 'success') {
-      toast({ title: '支付成功', description: '积分到账后余额会自动刷新' });
-      updateSession();
-    } else {
-      toast({ title: '支付未完成', variant: 'destructive' });
-    }
-  }, [searchParams, updateSession]);
-
-  const loadPaymentConfig = async () => {
-    try {
-      const res = await fetch('/api/payments/config', { cache: 'no-store' });
-      if (!res.ok) return;
-
-      const data = await res.json();
-      const config = data.data as PublicPaymentConfig;
-      setPaymentConfig(config);
-      setRechargeAmount(config.amountOptions[0] || config.minAmountCny || 10);
-      setPaymentType(config.methods[0]?.type || 'alipay');
-    } catch {
-      // ignore
-    }
-  };
 
   const loadMyInviteCode = async () => {
     try {
@@ -243,34 +197,6 @@ export default function SettingsPage() {
     }
   };
 
-  const handleCreatePayment = async () => {
-    if (!paymentConfig?.enabled) {
-      toast({ title: '充值功能未启用', variant: 'destructive' });
-      return;
-    }
-
-    setPaymentLoading(true);
-    try {
-      const res = await fetch('/api/payments/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ amountCny: rechargeAmount, paymentType }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || '创建支付订单失败');
-
-      window.location.href = data.data.paymentUrl;
-    } catch (err) {
-      toast({
-        title: '创建支付失败',
-        description: err instanceof Error ? err.message : '未知错误',
-        variant: 'destructive',
-      });
-    } finally {
-      setPaymentLoading(false);
-    }
-  };
-
   const handleUseInviteCode = async () => {
     if (!inviteCode.trim()) {
       toast({ title: '请输入邀请码', variant: 'destructive' });
@@ -319,12 +245,6 @@ export default function SettingsPage() {
   if (!session?.user) {
     return null;
   }
-
-  const paymentDiscount = paymentConfig?.amountDiscounts[String(rechargeAmount)] || 1;
-  const paidAmount = Math.max(0.01, rechargeAmount * paymentDiscount);
-  const rechargePoints = Math.round(
-    rechargeAmount * (paymentConfig?.pointsPerCny || 100)
-  );
 
   return (
     <div className="max-w-3xl mx-auto space-y-8">
@@ -421,114 +341,6 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
-
-      {/* Online Recharge Card */}
-      {paymentConfig?.enabled && (
-        <div className="surface overflow-hidden">
-          <div className="p-6 border-b border-border/70">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 bg-sky-500/15 rounded-xl flex items-center justify-center border border-sky-500/30">
-                <CreditCard className="w-5 h-5 text-sky-300" />
-              </div>
-              <div>
-                <h2 className="text-lg font-medium text-foreground">在线充值</h2>
-                <p className="text-sm text-foreground/40">
-                  1 元人民币 = {formatBalance(paymentConfig.pointsPerCny)} 积分
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="p-6 space-y-5">
-            <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-              <div className="space-y-2">
-                <label className="text-sm text-foreground/50 uppercase tracking-wider">充值金额</label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min={paymentConfig.minAmountCny}
-                    value={rechargeAmount}
-                    onChange={(event) =>
-                      setRechargeAmount(Math.max(paymentConfig.minAmountCny, Number(event.target.value) || paymentConfig.minAmountCny))
-                    }
-                    className="w-full px-4 py-3 bg-input/70 border border-border/70 rounded-xl text-foreground focus:outline-none focus:border-border focus:ring-2 focus:ring-ring/30 transition-colors"
-                  />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm text-foreground/40">元</span>
-                </div>
-                <p className="text-sm text-foreground/50">
-                  可获得 <span className="text-foreground">{formatBalance(rechargePoints)}</span> 积分
-                  {paymentDiscount < 1 && (
-                    <span className="ml-2 text-emerald-300">实付 ¥{paidAmount.toFixed(2)}</span>
-                  )}
-                </p>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm text-foreground/50 uppercase tracking-wider">支付方式</label>
-                <div className="flex flex-wrap gap-2">
-                  {paymentConfig.methods.map((method) => (
-                    <button
-                      key={method.type}
-                      type="button"
-                      onClick={() => setPaymentType(method.type)}
-                      className={`flex h-12 items-center gap-2 rounded-xl border px-4 text-sm transition-colors ${
-                        paymentType === method.type
-                          ? 'border-sky-400/60 bg-sky-500/15 text-sky-200'
-                          : 'border-border/70 bg-card/60 text-foreground/70 hover:bg-card/80'
-                      }`}
-                    >
-                      <CreditCard className="h-4 w-4" />
-                      {method.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {paymentConfig.amountOptions.map((amount) => {
-                const discount = paymentConfig.amountDiscounts[String(amount)] || 1;
-                const actual = amount * discount;
-                return (
-                  <button
-                    key={amount}
-                    type="button"
-                    onClick={() => setRechargeAmount(amount)}
-                    className={`min-h-[96px] rounded-xl border p-4 text-left transition-colors ${
-                      rechargeAmount === amount
-                        ? 'border-sky-400/60 bg-sky-500/15'
-                        : 'border-border/70 bg-card/60 hover:bg-card/80'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-lg font-medium text-foreground">{amount} 元</p>
-                      {discount < 1 && (
-                        <span className="rounded-md bg-emerald-500/15 px-2 py-0.5 text-xs text-emerald-300">
-                          {(discount * 10).toFixed(1)}折
-                        </span>
-                      )}
-                    </div>
-                    <p className="mt-2 text-xs text-foreground/45">
-                      实付 ¥{actual.toFixed(2)}
-                    </p>
-                    <p className="mt-1 text-xs text-foreground/45">
-                      到账 {formatBalance(Math.round(amount * paymentConfig.pointsPerCny))} 积分
-                    </p>
-                  </button>
-                );
-              })}
-            </div>
-
-            <button
-              type="button"
-              onClick={handleCreatePayment}
-              disabled={paymentLoading}
-              className="flex w-full items-center justify-center gap-2 rounded-xl bg-foreground px-6 py-3 text-background font-medium transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {paymentLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
-              立即充值
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Finance Records Card */}
       <div className="surface overflow-hidden">

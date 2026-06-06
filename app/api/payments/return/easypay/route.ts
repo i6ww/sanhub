@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
     console.error('[EasyPay Return] error:', error);
     return { ok: false, message: 'payment error' };
   });
-  const target = new URL('/settings', redirectOrigin);
+  const target = new URL('/recharge', redirectOrigin);
   target.searchParams.set('payment', result.ok ? 'success' : 'failed');
 
   if (result.message) {
