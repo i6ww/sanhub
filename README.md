@@ -94,7 +94,7 @@
 git clone https://github.com/i6ww/sanhub.git && cd sanhub && docker compose up -d
 ```
 
-启动后访问 http://localhost:3001
+启动后访问 http://localhost:3000
 
 | 项目 | 值 |
 |------|-----|
@@ -118,8 +118,8 @@ git clone https://github.com/i6ww/sanhub.git
 cd sanhub
 
 cat > .env <<'EOF'
-APP_PORT=3001
-NEXTAUTH_URL=http://your-server-ip:3001
+APP_PORT=3000
+NEXTAUTH_URL=http://your-server-ip:3000
 NEXTAUTH_SECRET=replace-with-a-random-32-byte-secret
 ADMIN_EMAIL=admin@example.com
 ADMIN_PASSWORD=replace-with-a-strong-password
@@ -149,7 +149,7 @@ environment:
   - ADMIN_PASSWORD=your-secure-password   # 可选：自定义管理员密码
 ```
 
-> 💡 `NEXTAUTH_URL` 只有在使用域名访问时才需要配置，本地 `localhost:3001` 访问无需设置。
+> 💡 `NEXTAUTH_URL` 只有在使用域名访问时才需要配置，本地 `localhost:3000` 访问无需设置。
 
 ---
 
@@ -171,7 +171,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-访问 http://localhost:3001
+访问 http://localhost:3000
 
 首次运行会自动创建数据库和管理员账号。
 

@@ -60,7 +60,9 @@ const DEFAULT_DURATIONS: VideoDuration[] = [
   { value: '8s', label: '8 秒', cost: 100 },
 ];
 
-const GROK_MAX_VIDEO_LENGTH_SECONDS = 30;
+const GROK_SUPPORTED_VIDEO_LENGTHS = [6, 10, 12, 16, 20] as const;
+const GROK_MIN_VIDEO_LENGTH_SECONDS = GROK_SUPPORTED_VIDEO_LENGTHS[0];
+const GROK_MAX_VIDEO_LENGTH_SECONDS = GROK_SUPPORTED_VIDEO_LENGTHS[GROK_SUPPORTED_VIDEO_LENGTHS.length - 1];
 
 const GROK_ASPECT_RATIO_OPTIONS: Array<{ value: NonNullable<VideoConfigObject['aspect_ratio']>; label: string }> = [
   { value: '16:9', label: '16:9' },
@@ -76,24 +78,34 @@ const GROK_TEMPLATE_ASPECT_RATIOS: AspectRatioRow[] = GROK_ASPECT_RATIO_OPTIONS.
 }));
 
 const GROK_TEMPLATE_DURATIONS: VideoDuration[] = [
-  { value: '5s', label: '5 \u79d2', cost: 100 },
-  { value: '8s', label: '8 \u79d2', cost: 100 },
-  { value: '15s', label: '15 \u79d2', cost: 150 },
-  { value: '30s', label: '30 \u79d2', cost: 200 },
+  { value: '6s', label: '6 \u79d2', cost: 100 },
+  { value: '10s', label: '10 \u79d2', cost: 100 },
+  { value: '12s', label: '12 \u79d2', cost: 120 },
+  { value: '16s', label: '16 \u79d2', cost: 150 },
+  { value: '20s', label: '20 \u79d2', cost: 200 },
 ];
 
 const GROK_TEMPLATE_VIDEO_CONFIG_OBJECT: VideoConfigObject = {
   aspect_ratio: '16:9',
-  video_length: 8,
+  video_length: 10,
   resolution: 'HD',
   preset: 'normal',
 };
 
 function parseDurationToSeconds(duration: string): number {
   const matched = (duration || '').match(/(\d+)/);
-  const value = matched ? Number.parseInt(matched[1], 10) : 8;
-  if (!Number.isFinite(value) || value <= 0) return 8;
+  const value = matched ? Number.parseInt(matched[1], 10) : 10;
+  if (!Number.isFinite(value) || value <= 0) return 10;
   return value;
+}
+
+function normalizeGrokSupportedVideoLength(seconds: number): number {
+  const requested = Number.isFinite(seconds) ? Math.floor(seconds) : 10;
+  return GROK_SUPPORTED_VIDEO_LENGTHS.reduce((best, current) => {
+    const currentDistance = Math.abs(current - requested);
+    const bestDistance = Math.abs(best - requested);
+    return currentDistance < bestDistance ? current : best;
+  }, GROK_SUPPORTED_VIDEO_LENGTHS[0]);
 }
 
 function normalizeAspectRatioForVideoConfig(aspectRatio?: string): NonNullable<VideoConfigObject['aspect_ratio']> {
@@ -107,8 +119,8 @@ function normalizeAspectRatioForVideoConfig(aspectRatio?: string): NonNullable<V
 }
 
 function normalizeVideoConfigObject(input: VideoConfigObject): VideoConfigObject {
-  const videoLengthRaw = typeof input.video_length === 'number' ? input.video_length : 8;
-  const videoLength = Math.max(5, Math.min(GROK_MAX_VIDEO_LENGTH_SECONDS, Math.floor(videoLengthRaw)));
+  const videoLengthRaw = typeof input.video_length === 'number' ? input.video_length : 10;
+  const videoLength = normalizeGrokSupportedVideoLength(videoLengthRaw);
   const resolution = input.resolution === 'SD' ? 'SD' : 'HD';
   const preset = input.preset === 'fun' || input.preset === 'spicy' ? input.preset : 'normal';
   return {
@@ -123,7 +135,7 @@ function buildGrokTemplateModelPayload(channelId: string) {
   return {
     channelId,
     name: 'Grok Imagine Video',
-    description: 'Grok \u9ed8\u8ba4\u6a21\u677f\uff0c\u5185\u7f6e 5/8/15/30 \u79d2\u548c HD \u914d\u7f6e',
+    description: 'Grok \u9ed8\u8ba4\u6a21\u677f\uff0c\u5185\u7f6e 6/10/12/16/20 \u79d2\u548c HD \u914d\u7f6e',
     apiModel: 'grok-imagine-1.0-video',
     features: {
       textToVideo: true,
@@ -134,7 +146,7 @@ function buildGrokTemplateModelPayload(channelId: string) {
     aspectRatios: GROK_TEMPLATE_ASPECT_RATIOS,
     durations: GROK_TEMPLATE_DURATIONS,
     defaultAspectRatio: '16:9',
-    defaultDuration: '8s',
+    defaultDuration: '10s',
     videoConfigObject: GROK_TEMPLATE_VIDEO_CONFIG_OBJECT,
     highlight: false,
     enabled: true,
@@ -168,7 +180,7 @@ function buildManualTemplateModelPayload(channel: VideoChannel) {
   if (channel.type === 'grok2api') {
     return {
       name: 'Grok Imagine Video',
-      description: '\u5df2\u9884\u586b Grok \u6a21\u677f\uff0c\u652f\u6301 5/8/15/30 \u79d2',
+      description: '\u5df2\u9884\u586b Grok \u6a21\u677f\uff0c\u652f\u6301 6/10/12/16/20 \u79d2',
       apiModel: 'grok-imagine-1.0-video',
       baseUrl: '',
       apiKey: '',
@@ -179,7 +191,7 @@ function buildManualTemplateModelPayload(channel: VideoChannel) {
         supportStyles: false,
       },
       defaultAspectRatio: '16:9',
-      defaultDuration: '8s',
+      defaultDuration: '10s',
       videoConfigObject: {
         ...GROK_TEMPLATE_VIDEO_CONFIG_OBJECT,
       },
@@ -381,13 +393,13 @@ export default function VideoChannelsPage() {
 
   const startEditModel = (model: VideoModel) => {
     const existingVideoConfigObject = model.videoConfigObject
-      ? normalizeVideoConfigObject(model.videoConfigObject)
-      : normalizeVideoConfigObject({
-          aspect_ratio: normalizeAspectRatioForVideoConfig(model.defaultAspectRatio),
-          video_length: Math.max(5, Math.min(GROK_MAX_VIDEO_LENGTH_SECONDS, parseDurationToSeconds(model.defaultDuration))),
-          resolution: 'HD' as const,
-          preset: 'normal' as const,
-        });
+        ? normalizeVideoConfigObject(model.videoConfigObject)
+        : normalizeVideoConfigObject({
+            aspect_ratio: normalizeAspectRatioForVideoConfig(model.defaultAspectRatio),
+            video_length: normalizeGrokSupportedVideoLength(parseDurationToSeconds(model.defaultDuration)),
+            resolution: 'HD' as const,
+            preset: 'normal' as const,
+          });
 
     setModelForm({
       name: model.name,
@@ -753,7 +765,7 @@ export default function VideoChannelsPage() {
                 normalizeAspectRatioForVideoConfig(defaultAspectRatio),
               video_length:
                 modelForm.videoConfigObject?.video_length ||
-                Math.max(5, Math.min(GROK_MAX_VIDEO_LENGTH_SECONDS, parseDurationToSeconds(defaultDuration))),
+                normalizeGrokSupportedVideoLength(parseDurationToSeconds(defaultDuration)),
             })
           : undefined;
 
@@ -887,7 +899,7 @@ export default function VideoChannelsPage() {
 
         <div className="rounded-xl border border-border/70 bg-card/50 p-4 text-sm text-foreground/60">
           {channelForm.type === 'flow2api' && '\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u4f18\u5148\u5c1d\u8bd5\u81ea\u52a8\u62c9\u53d6\u5e76\u5bfc\u5165\u8fdc\u7aef\u6a21\u578b\uff1b\u540e\u7eed\u4e5f\u53ef\u4ee5\u5728\u6e20\u9053\u5361\u7247\u91cc\u4f7f\u7528\u201c\u4e00\u952e\u5bfc\u5165\u201d\u6216\u624b\u52a8\u52fe\u9009\u5bfc\u5165\u3002'}
-          {channelForm.type === 'grok2api' && `\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 Grok \u6a21\u677f\u6a21\u578b\uff0cvideo_length \u5141\u8bb8 5-${GROK_MAX_VIDEO_LENGTH_SECONDS} \u79d2\uff0c\u5e76\u4f1a\u7ee7\u7eed\u900f\u4f20\u5230\u751f\u6210\u8bf7\u6c42\u3002`}
+          {channelForm.type === 'grok2api' && `\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 Grok \u6a21\u677f\u6a21\u578b\uff0cvideo_length \u652f\u6301 6/10/12/16/20 \u79d2\uff0c\u5e76\u4f1a\u7ee7\u7eed\u900f\u4f20\u5230\u751f\u6210\u8bf7\u6c42\u3002`}
           {channelForm.type === 'apexerapi' && '\u9002\u7528\u4e8e adobe2api /v1/videos\uff0c\u4fdd\u5b58\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 sora-2 \u9ed8\u8ba4\u6a21\u578b\u3002'}
           {channelForm.type === 'sora' && '\u4fdd\u5b58\u6e20\u9053\u540e\u4f1a\u81ea\u52a8\u8865\u4e00\u6761 Sora \u9ed8\u8ba4\u6a21\u578b\uff0c\u901a\u5e38\u4e0d\u9700\u8981\u624b\u5de5\u586b\u5199\u7b2c\u4e00\u6761\u6a21\u578b\u3002'}
           {channelForm.type === 'openai-compatible' && '\u9002\u7528\u4e8e\u517c\u5bb9 /v1/chat/completions \u7684\u89c6\u9891\u63a5\u53e3\u3002\u5148\u5efa\u6e20\u9053\uff0c\u518d\u6309\u5b9e\u9645\u6a21\u578b ID \u8865\u5145\u6a21\u578b\u5373\u53ef\u3002'}
@@ -991,7 +1003,7 @@ export default function VideoChannelsPage() {
           {selectedChannel && (
             <div className="rounded-xl border border-border/70 bg-card/50 p-4 text-sm text-foreground/60">
               {selectedChannel.type === 'flow2api' && '\u5df2\u77e5\u6a21\u578b ID \u65f6\u518d\u624b\u52a8\u6dfb\u52a0\uff1b\u5982\u679c\u53ea\u662f\u60f3\u628a\u8fdc\u7aef\u6a21\u578b\u62c9\u4e0b\u6765\uff0c\u4f18\u5148\u4f7f\u7528\u6e20\u9053\u5361\u7247\u91cc\u7684\u201c\u4e00\u952e\u5bfc\u5165\u201d\u6216\u5237\u65b0\u9009\u62e9\u5bfc\u5165\u3002'}
-              {selectedChannel.type === 'grok2api' && `\u5df2\u6309 Grok \u6a21\u677f\u9884\u586b\uff0cvideo_length \u652f\u6301 5-${GROK_MAX_VIDEO_LENGTH_SECONDS} \u79d2\uff0c\u4fdd\u5b58\u540e\u4f1a\u539f\u6837\u900f\u4f20\u5230\u751f\u6210\u8bf7\u6c42\u3002`}
+              {selectedChannel.type === 'grok2api' && `\u5df2\u6309 Grok \u6a21\u677f\u9884\u586b\uff0cvideo_length \u652f\u6301 6/10/12/16/20 \u79d2\uff0c\u4fdd\u5b58\u540e\u4f1a\u539f\u6837\u900f\u4f20\u5230\u751f\u6210\u8bf7\u6c42\u3002`}
               {selectedChannel.type === 'apexerapi' && '\u5df2\u6309 adobe2api sora-2 \u9884\u586b\uff0cSanHub \u4f1a\u628a sora-video / sora2-* \u8bf7\u6c42\u8f6c\u6210 sora-2\u3002'}
               {selectedChannel.type === 'sora' && '\u5df2\u6309 Sora \u5e38\u7528\u6a21\u677f\u9884\u586b\uff0c\u901a\u5e38\u53ea\u9700\u8981\u786e\u8ba4\u540d\u79f0\u3001\u9ed8\u8ba4\u65f6\u957f\u548c\u4ef7\u683c\u5373\u53ef\u4fdd\u5b58\u3002'}
               {selectedChannel.type === 'openai-compatible' && '\u6a21\u578b\u7ea7 Base URL / API Key \u53ef\u4ee5\u7559\u7a7a\uff0c\u4fdd\u5b58\u65f6\u4f1a\u81ea\u52a8\u7ee7\u627f\u6e20\u9053\u4e0a\u7684\u914d\u7f6e\u3002'}
@@ -1256,7 +1268,7 @@ export default function VideoChannelsPage() {
                     <label className="text-xs text-foreground/60">video_length</label>
                     <input
                       type="number"
-                      min={5}
+                      min={GROK_MIN_VIDEO_LENGTH_SECONDS}
                       max={GROK_MAX_VIDEO_LENGTH_SECONDS}
                       value={modelForm.videoConfigObject.video_length || 10}
                       onChange={(e) => {
@@ -1265,7 +1277,7 @@ export default function VideoChannelsPage() {
                           ...modelForm,
                           videoConfigObject: {
                             ...modelForm.videoConfigObject,
-                            video_length: Number.isFinite(value) ? Math.max(5, Math.min(GROK_MAX_VIDEO_LENGTH_SECONDS, value)) : 10,
+                            video_length: Number.isFinite(value) ? normalizeGrokSupportedVideoLength(value) : 10,
                           },
                         });
                       }}

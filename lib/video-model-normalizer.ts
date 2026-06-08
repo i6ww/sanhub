@@ -18,6 +18,8 @@ type FlowVeoAspect = 'landscape' | 'portrait';
 
 const USER_VIDEO_DURATION_VALUE = '8s';
 const USER_VIDEO_DURATION_LABEL = '8 秒';
+const GROK_USER_VIDEO_DURATION_VALUE = '10s';
+const GROK_USER_VIDEO_DURATION_LABEL = '10 秒';
 
 const ASPECT_RATIO_ORDER = ['landscape', 'portrait', 'square', '16:9', '9:16', '1:1'];
 
@@ -217,6 +219,13 @@ export function getUserFacingVideoDurations(models: VideoModel[]): VideoDuration
   ];
 }
 
+function getGrokUserFacingVideoDurations(model: VideoModel): VideoDuration[] {
+  const durations = model.durations || [];
+  return durations.length > 0
+    ? durations
+    : [{ value: GROK_USER_VIDEO_DURATION_VALUE, label: GROK_USER_VIDEO_DURATION_LABEL, cost: 100 }];
+}
+
 function getDefaultAspectRatio(ratios: Array<{ value: string; label: string }>): string {
   if (ratios.some((ratio) => ratio.value === 'landscape')) return 'landscape';
   if (ratios.some((ratio) => ratio.value === '16:9')) return '16:9';
@@ -261,6 +270,11 @@ export function buildVideoModelDescription(params: {
 
 function toSafeVideoModel(model: VideoModel, channel: VideoChannel): SafeVideoModel {
   const aspectRatios = mergeVideoAspectRatios([model]);
+  const isGrokModel = channel.type === 'grok2api';
+  const grokDurations = isGrokModel ? getGrokUserFacingVideoDurations(model) : [];
+  const grokDefaultDuration = grokDurations.some((duration) => duration.value === model.defaultDuration)
+    ? model.defaultDuration
+    : grokDurations[0]?.value || GROK_USER_VIDEO_DURATION_VALUE;
   return {
     id: model.id,
     channelId: model.channelId,
@@ -275,13 +289,13 @@ function toSafeVideoModel(model: VideoModel, channel: VideoChannel): SafeVideoMo
       : model.description,
     features: model.features,
     aspectRatios,
-    durations: getUserFacingVideoDurations([model]),
+    durations: isGrokModel ? grokDurations : getUserFacingVideoDurations([model]),
     defaultAspectRatio: getDefaultAspectRatio(aspectRatios),
-    defaultDuration: USER_VIDEO_DURATION_VALUE,
+    defaultDuration: isGrokModel ? grokDefaultDuration : USER_VIDEO_DURATION_VALUE,
     videoConfigObject: model.videoConfigObject
       ? {
           ...model.videoConfigObject,
-          video_length: 8,
+          video_length: isGrokModel ? Number.parseInt(grokDefaultDuration, 10) || 10 : 8,
         }
       : undefined,
     highlight: model.highlight,

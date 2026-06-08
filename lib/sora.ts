@@ -65,6 +65,7 @@ type ExternalChatResponse = {
 const VIDEO_URL_PATTERN = /\.(mp4|mov|webm|mkv|m3u8)(\?|#|$)/i;
 const IMAGE_URL_PATTERN = /\.(jpg|jpeg|png|webp|gif|bmp|svg)(\?|#|$)/i;
 const GROK_MAX_VIDEO_LENGTH_SECONDS = 30;
+const GROK_SUPPORTED_VIDEO_LENGTHS = [6, 10, 12, 16, 20] as const;
 
 function normalizeExtractedUrl(raw: string, baseUrl?: string): string | null {
   const trimmed = raw.trim();
@@ -577,6 +578,15 @@ function normalizeGrokVideoLengthSeconds(duration?: string, fallback = 10): numb
   return Math.max(5, Math.min(GROK_MAX_VIDEO_LENGTH_SECONDS, Math.floor(base)));
 }
 
+function normalizeGrokSupportedVideoLength(seconds: number): number {
+  const requested = Number.isFinite(seconds) ? Math.floor(seconds) : 10;
+  return GROK_SUPPORTED_VIDEO_LENGTHS.reduce((best, current) => {
+    const currentDistance = Math.abs(current - requested);
+    const bestDistance = Math.abs(best - requested);
+    return currentDistance < bestDistance ? current : best;
+  }, GROK_SUPPORTED_VIDEO_LENGTHS[0]);
+}
+
 function mapFlowModel(modelName: string, aspectRatio: string, duration: string, imageCount: number): string {
   const normalizedModel = (modelName || '').trim();
   const lowerModel = normalizedModel.toLowerCase();
@@ -665,6 +675,35 @@ function resolveVideoConfigObject(
     video_length: Math.max(5, Math.min(GROK_MAX_VIDEO_LENGTH_SECONDS, Math.floor(videoLengthRaw))),
     resolution: resolutionRaw === 'SD' ? 'SD' : 'HD',
     preset: presetRaw === 'fun' || presetRaw === 'spicy' ? (presetRaw as 'fun' | 'spicy') : 'normal',
+  };
+}
+
+function grokSizeForAspectRatio(aspectRatio: string): string {
+  switch (normalizeAspectRatioLabel(aspectRatio)) {
+    case '9:16':
+      return '1024x1792';
+    case '1:1':
+      return '1024x1024';
+    case '2:3':
+      return '1024x1792';
+    case '3:2':
+      return '1792x1024';
+    case '16:9':
+    default:
+      return '1792x1024';
+  }
+}
+
+function resolveGrokVideoConfigObject(
+  request: SoraGenerateRequest,
+  model: VideoModel
+): { seconds: number; size: string; resolution_name: '480p' | '720p'; preset: 'fun' | 'normal' | 'spicy' } {
+  const legacyConfig = resolveVideoConfigObject(request, model);
+  return {
+    seconds: normalizeGrokSupportedVideoLength(legacyConfig.video_length),
+    size: grokSizeForAspectRatio(legacyConfig.aspect_ratio),
+    resolution_name: legacyConfig.resolution === 'SD' ? '480p' : '720p',
+    preset: legacyConfig.preset,
   };
 }
 
@@ -828,7 +867,7 @@ async function generateViaExternalChat(
   };
 
   if (channel.type === 'grok2api') {
-    payload.video_config = resolveVideoConfigObject(request, model);
+    payload.video_config = resolveGrokVideoConfigObject(request, model);
   }
 
   const apiUrl = `${effectiveBaseUrl.replace(/\/$/, '')}/v1/chat/completions`;

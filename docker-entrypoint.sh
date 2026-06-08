@@ -54,7 +54,7 @@ fi
 
 # Auto-detect NEXTAUTH_URL if not provided.
 if [ -z "$NEXTAUTH_URL" ]; then
-  export NEXTAUTH_URL="http://localhost:3001"
+  export NEXTAUTH_URL="http://localhost:3000"
   echo "[SanHub] Using default NEXTAUTH_URL: $NEXTAUTH_URL"
 fi
 

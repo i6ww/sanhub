@@ -1,0 +1,49 @@
+﻿const utility=require("utility"); //导入md5第三方库
+ 
+let data={
+            pid:"你的pid",
+            money:"金额",
+            name:"商品名称",
+            notify_url:"http://xxxxx",//异步通知地址
+            out_trade_no:"2019050823435494926", //订单号,自己生成。我是当前时间YYYYMMDDHHmmss再加上随机三位数
+            return_url:"http://xxxx",//跳转通知地址
+            sitename:"网站名称",
+            type:"alipay",//支付方式:alipay:支付宝,wxpay:微信支付,qqpay:QQ钱包,tenpay:财付通,
+ }
+ 
+//参数进行排序拼接字符串(非常重要)
+function  getVerifyParams(params) {
+        var sPara = [];
+        if(!params) return null;
+        for(var key in params) {
+            if((!params[key]) || key == "sign" || key == "sign_type") {
+                continue;
+            };
+            sPara.push([key, params[key]]);
+        }
+        sPara = sPara.sort();
+        var prestr = '';
+        for(var i2 = 0; i2 < sPara.length; i2++) {
+            var obj = sPara[i2];
+            if(i2 == sPara.length - 1) {
+                prestr = prestr + obj[0] + '=' + obj[1] + '';
+            } else {
+                prestr = prestr + obj[0] + '=' + obj[1] + '&';
+            }
+        }
+        return prestr;
+}
+ 
+ 
+ 
+//对参数进行排序，生成待签名字符串--(具体看支付宝)
+let str=getVerifyParams(data);
+ 
+let key="你的key";//密钥,易支付注册会提供pid和秘钥
+ 
+//MD5加密--进行签名
+let sign=utility.md5(str+key);//注意支付宝规定签名时:待签名字符串后要加key
+ 
+最后要将参数返回给前端，前端访问url发起支付
+let result =`https://www.ezfpy.cn/submit.php?${str}&sign=${sign}&sign_type=MD5`；
+ 
