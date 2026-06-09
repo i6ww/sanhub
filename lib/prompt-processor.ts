@@ -1,4 +1,9 @@
 import { getChatModel, getSystemConfig } from './db';
+import {
+  extractChatCompletionContent,
+  readChatCompletionJson,
+  resolveChatCompletionsUrl,
+} from './chat-completion';
 
 const DEFAULT_FILTER_PROMPT = 'You are a safety prompt filter for video generation. Rewrite the user prompt into a safe version while preserving creative intent as much as possible. Return only the rewritten prompt text.';
 const DEFAULT_TRANSLATE_PROMPT = 'Translate the user prompt into clear, natural English for video generation. Preserve details, style, and constraints. Return only the translated prompt text.';
@@ -155,7 +160,7 @@ async function runPromptCompletion(modelId: string, instruction: string, inputPr
     throw new Error(`Prompt processing model is unavailable: ${modelId}`);
   }
 
-  const response = await fetch(model.apiUrl, {
+  const response = await fetch(resolveChatCompletionsUrl(model.apiUrl), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -178,17 +183,8 @@ async function runPromptCompletion(modelId: string, instruction: string, inputPr
     }),
   });
 
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    const message =
-      typeof data?.error?.message === 'string'
-        ? data.error.message
-        : `Prompt processor API failed: ${response.status}`;
-    throw new Error(message);
-  }
-
-  const data = await response.json().catch(() => ({}));
-  const content = extractCompletionContent(data);
+  const data = await readChatCompletionJson(response);
+  const content = extractCompletionContent(data) || extractChatCompletionContent(data);
   const result = extractFinalPrompt(content);
 
   if (!result) {

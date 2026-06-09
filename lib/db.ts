@@ -1072,6 +1072,65 @@ export async function createPaymentOrder(input: {
   return order;
 }
 
+export async function createManualBalancePaymentOrder(input: {
+  userId: string;
+  points: number;
+  operatorId: string;
+  reason?: string;
+}): Promise<PaymentOrder> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+  const safePoints = Math.floor(Number(input.points));
+  if (!input.userId || !input.operatorId || !Number.isFinite(safePoints) || safePoints <= 0) {
+    throw new Error('Invalid manual balance payment order');
+  }
+
+  const order: PaymentOrder = {
+    id: generateId(),
+    userId: input.userId,
+    outTradeNo: `ADMIN${now}${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+    provider: 'manual',
+    providerTradeNo: input.operatorId,
+    paymentType: 'admin_balance',
+    amountCents: 0,
+    paidAmountCents: 0,
+    points: safePoints,
+    status: 'succeeded',
+    rawNotify: JSON.stringify({
+      type: 'admin_balance',
+      operatorId: input.operatorId,
+      reason: input.reason || '',
+    }),
+    createdAt: now,
+    paidAt: now,
+    updatedAt: now,
+  };
+
+  await db.execute(
+    `INSERT INTO payment_orders (id, user_id, out_trade_no, provider, provider_trade_no, payment_type, amount_cents, paid_amount_cents, points, status, raw_notify, created_at, paid_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      order.id,
+      order.userId,
+      order.outTradeNo,
+      order.provider,
+      order.providerTradeNo,
+      order.paymentType,
+      order.amountCents,
+      order.paidAmountCents,
+      order.points,
+      order.status,
+      order.rawNotify,
+      order.createdAt,
+      order.paidAt,
+      order.updatedAt,
+    ]
+  );
+
+  return order;
+}
+
 export async function getPaymentOrderByOutTradeNo(
   outTradeNo: string
 ): Promise<PaymentOrder | null> {
@@ -1155,12 +1214,12 @@ export async function getPaymentOrdersForAdmin(options: {
   }
 
   if (options.startTime) {
-    whereClauses.push('p.created_at >= ?');
+    whereClauses.push('COALESCE(NULLIF(p.paid_at, 0), p.created_at) >= ?');
     values.push(options.startTime);
   }
 
   if (options.endTime) {
-    whereClauses.push('p.created_at <= ?');
+    whereClauses.push('COALESCE(NULLIF(p.paid_at, 0), p.created_at) <= ?');
     values.push(options.endTime);
   }
 
@@ -2036,6 +2095,12 @@ export async function getUserDailyUsage(userId: string): Promise<DailyUsageStats
 
 const LEGACY_IMAGE_BUCKET_ID = 'legacy-picui-default';
 
+function normalizeImageBucketProvider(value: unknown): ImageBucketConfig['provider'] {
+  if (value === 's3-compatible') return 's3-compatible';
+  if (value === 'lsky-v2') return 'lsky-v2';
+  return 'picui';
+}
+
 function sanitizeImageBucket(
   value: unknown,
   index: number
@@ -2043,8 +2108,7 @@ function sanitizeImageBucket(
   if (!value || typeof value !== 'object') return null;
 
   const bucket = value as Record<string, unknown>;
-  const provider =
-    bucket.provider === 's3-compatible' ? 's3-compatible' : 'picui';
+  const provider = normalizeImageBucketProvider(bucket.provider);
   const id =
     typeof bucket.id === 'string' && bucket.id.trim()
       ? bucket.id.trim()
@@ -2063,6 +2127,8 @@ function sanitizeImageBucket(
       typeof bucket.secretKey === 'string' ? bucket.secretKey.trim() : undefined,
     bucketName:
       typeof bucket.bucketName === 'string' ? bucket.bucketName.trim() : undefined,
+    storageId:
+      typeof bucket.storageId === 'string' ? bucket.storageId.trim() : undefined,
     region: typeof bucket.region === 'string' ? bucket.region.trim() : undefined,
     publicBaseUrl:
       typeof bucket.publicBaseUrl === 'string'

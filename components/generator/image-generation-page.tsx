@@ -104,6 +104,7 @@ export function ImageGenerationPage({
   const siteConfig = useSiteConfig();
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const refreshGenerationFeedRef = useRef<() => Promise<void>>(async () => {});
+  const deletedGenerationIdsRef = useRef<Set<string>>(new Set());
   const imagesRef = useRef<Array<{ file: File; preview: string }>>([]);
   const isActiveRef = useRef(isActive);
   const submissionLockRef = useRef(false);
@@ -315,10 +316,15 @@ export function ImageGenerationPage({
         (generation) =>
           generation.resultUrl &&
           generation.status === 'completed' &&
-          isTerminalGenerationStatus(generation.status)
+          isTerminalGenerationStatus(generation.status) &&
+          !deletedGenerationIdsRef.current.has(generation.id)
       );
       const failedImageTasks = imageGenerations
-        .filter((generation) => isFailedGenerationStatus(generation.status))
+        .filter(
+          (generation) =>
+            isFailedGenerationStatus(generation.status) &&
+            !deletedGenerationIdsRef.current.has(generation.id)
+        )
         .map(
           (generation) =>
             ({
@@ -426,6 +432,7 @@ export function ImageGenerationPage({
           onCompleted: async (generation) => {
             await update();
             setTasks((prev) => prev.filter((task) => task.id !== taskId));
+            if (deletedGenerationIdsRef.current.has(generation.id)) return;
             setGenerations((prev) => mergeGenerationsById(prev, [generation]));
             void loadRecentGenerations();
 
@@ -543,6 +550,7 @@ export function ImageGenerationPage({
       if (!confirmed) return;
 
       setBusyGenerationId(generation.id);
+      deletedGenerationIdsRef.current.add(generation.id);
       setGenerations((prev) => prev.filter((item) => item.id !== generation.id));
 
       try {
@@ -553,6 +561,7 @@ export function ImageGenerationPage({
         onGenerationDeleted?.(generation.id);
         toast({ title: '作品已删除' });
       } catch (err) {
+        deletedGenerationIdsRef.current.delete(generation.id);
         setGenerations((prev) => mergeGenerationsById(prev, [generation]));
         toast({
           title: '删除失败',

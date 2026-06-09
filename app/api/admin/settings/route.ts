@@ -5,6 +5,12 @@ import { getSystemConfig, updateSystemConfig } from '@/lib/db';
 import { syncUnusedInviteCodeBonuses } from '@/lib/db-codes';
 import type { EmailVerificationConfig, GenerationQueueConfig, ImageBucketConfig, ImageStorageConfig, PaymentConfig, PaymentMethodConfig } from '@/types';
 
+function normalizeBucketProvider(value: unknown): ImageBucketConfig['provider'] {
+  if (value === 's3-compatible') return 's3-compatible';
+  if (value === 'lsky-v2') return 'lsky-v2';
+  return 'picui';
+}
+
 function normalizePositiveInt(value: unknown, fallback: number): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -33,14 +39,15 @@ function normalizeBucket(
       typeof bucket.name === 'string' && bucket.name.trim()
         ? bucket.name.trim()
         : `Bucket ${index + 1}`,
-    provider:
-      bucket.provider === 's3-compatible' ? 's3-compatible' : 'picui',
+    provider: normalizeBucketProvider(bucket.provider),
     baseUrl: typeof bucket.baseUrl === 'string' ? bucket.baseUrl.trim() : '',
     apiKey: typeof bucket.apiKey === 'string' ? bucket.apiKey.trim() : '',
     secretKey:
       typeof bucket.secretKey === 'string' ? bucket.secretKey.trim() : undefined,
     bucketName:
       typeof bucket.bucketName === 'string' ? bucket.bucketName.trim() : undefined,
+    storageId:
+      typeof bucket.storageId === 'string' ? bucket.storageId.trim() : undefined,
     region:
       typeof bucket.region === 'string' ? bucket.region.trim() : undefined,
     publicBaseUrl:
@@ -58,6 +65,7 @@ function normalizeBucket(
     !nextBucket.apiKey &&
     !nextBucket.secretKey &&
     !nextBucket.bucketName &&
+    !nextBucket.storageId &&
     !nextBucket.publicBaseUrl &&
     !nextBucket.pathPrefix;
 
@@ -85,6 +93,13 @@ function normalizeImageStorage(
     if (bucket.provider === 'picui') {
       if (!bucket.baseUrl || !bucket.apiKey) {
         throw new Error(`桶 ${bucket.name} 缺少 PicUI 地址或 API Key`);
+      }
+      continue;
+    }
+
+    if (bucket.provider === 'lsky-v2') {
+      if (!bucket.baseUrl || !bucket.apiKey || !bucket.storageId) {
+        throw new Error(`Bucket ${bucket.name} is missing Lsky v2 URL, API Key, or Storage ID`);
       }
       continue;
     }

@@ -15,8 +15,28 @@ function formatDateTime(value?: number): string {
 }
 
 function dateInputToTimestamp(value: string, endOfDay = false): number | undefined {
-  if (!value) return undefined;
-  const date = new Date(`${value}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`);
+  const normalized = value.trim().replace(/\//g, '-');
+  if (!normalized) return undefined;
+  if (!/^\d{4}-\d{1,2}-\d{1,2}$/.test(normalized)) return undefined;
+
+  const [year, month, day] = normalized.split('-').map((part) => Number(part));
+  const date = new Date(
+    year,
+    month - 1,
+    day,
+    endOfDay ? 23 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 59 : 0,
+    endOfDay ? 999 : 0
+  );
+  if (
+    date.getFullYear() !== year ||
+    date.getMonth() !== month - 1 ||
+    date.getDate() !== day
+  ) {
+    return undefined;
+  }
+
   const timestamp = date.getTime();
   return Number.isFinite(timestamp) ? timestamp : undefined;
 }
@@ -25,6 +45,13 @@ function paymentStatusLabel(status: string): string {
   if (status === 'succeeded') return '\u5df2\u652f\u4ed8';
   if (status === 'failed') return '\u5931\u8d25';
   return '\u5f85\u652f\u4ed8';
+}
+
+function paymentSourceLabel(order: { provider: string; paymentType: string }): string {
+  if (order.provider === 'manual' || order.paymentType === 'admin_balance') {
+    return '\u7ba1\u7406\u5458\u52a0\u5206';
+  }
+  return order.paymentType || '-';
 }
 
 function paymentStatusClass(status: string): string {
@@ -64,7 +91,9 @@ export default function StatsPage() {
 
   const loadStats = async () => {
     try {
-      setLoading(true);
+      if (!stats) {
+        setLoading(true);
+      }
       const params = new URLSearchParams({
         days: String(days),
         paymentPage: String(paymentPage),
@@ -89,7 +118,7 @@ export default function StatsPage() {
     }
   };
 
-  if (loading || !stats) {
+  if (!stats) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader2 className="w-8 h-8 animate-spin text-foreground/30" />
@@ -337,21 +366,25 @@ export default function StatsPage() {
               <option value="failed">{'\u5931\u8d25'}</option>
             </select>
             <input
-              type="date"
+              type="text"
+              inputMode="numeric"
               value={paymentStartDate}
               onChange={(event) => {
                 setPaymentPage(1);
                 setPaymentStartDate(event.target.value);
               }}
+              placeholder="YYYY-MM-DD"
               className="rounded-xl border border-border/70 bg-input/70 px-3 py-2 text-sm text-foreground outline-none focus:border-border"
             />
             <input
-              type="date"
+              type="text"
+              inputMode="numeric"
               value={paymentEndDate}
               onChange={(event) => {
                 setPaymentPage(1);
                 setPaymentEndDate(event.target.value);
               }}
+              placeholder="YYYY-MM-DD"
               className="rounded-xl border border-border/70 bg-input/70 px-3 py-2 text-sm text-foreground outline-none focus:border-border"
             />
             <button
@@ -393,8 +426,13 @@ export default function StatsPage() {
                       <div className="text-sm text-foreground">{order.userName || '-'}</div>
                       <div className="text-xs text-foreground/40">{order.userEmail || order.userId}</div>
                     </td>
-                    <td className="px-5 py-3 font-mono text-xs text-foreground/60">{order.outTradeNo}</td>
-                    <td className="px-5 py-3 text-right text-foreground">{formatCurrency(order.paidAmountCents)}</td>
+                    <td className="px-5 py-3">
+                      <div className="font-mono text-xs text-foreground/60">{order.outTradeNo}</div>
+                      <div className="mt-1 text-[10px] text-foreground/35">{paymentSourceLabel(order)}</div>
+                    </td>
+                    <td className="px-5 py-3 text-right text-foreground">
+                      {order.provider === 'manual' ? '-' : formatCurrency(order.paidAmountCents)}
+                    </td>
                     <td className="px-5 py-3 text-right text-emerald-300">+{formatBalance(order.points)}</td>
                     <td className={`px-5 py-3 text-right ${paymentStatusClass(order.status)}`}>
                       {paymentStatusLabel(order.status)}

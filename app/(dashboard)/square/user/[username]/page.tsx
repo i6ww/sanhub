@@ -250,7 +250,7 @@ export default function UserProfilePage() {
     const pathname = url.split('?')[0];
     const ext = pathname.includes('.') ? pathname.split('.').pop() || '' : '';
     const fallbackExt = selectedVideo.attachment.kind?.includes('video') ? 'mp4' : 'png';
-    const filename = `sanhub-${selectedVideo.id}.${ext || fallbackExt}`;
+    const filename = `miaotu-${selectedVideo.id}.${ext || fallbackExt}`;
 
     try {
       const response = await fetch(url);

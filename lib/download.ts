@@ -30,8 +30,7 @@ export async function downloadAsset(url: string, filename: string): Promise<void
     // Handle base64 data URL directly
     blob = dataUrlToBlob(url);
   } else {
-    // Fetch remote URL
-    const response = await fetch(url);
+    const response = await fetchAsset(url, filename);
     if (!response.ok) {
       throw new Error(`Download failed with status ${response.status}`);
     }
@@ -48,4 +47,21 @@ export async function downloadAsset(url: string, filename: string): Promise<void
 
   link.remove();
   URL.revokeObjectURL(objectUrl);
+}
+
+async function fetchAsset(url: string, filename: string): Promise<Response> {
+  const proxyResponse = () => {
+    const params = new URLSearchParams({
+      url,
+      filename,
+    });
+    return fetch(`/api/download?${params.toString()}`);
+  };
+
+  try {
+    const response = await fetch(url);
+    return response.ok ? response : proxyResponse();
+  } catch {
+    return proxyResponse();
+  }
 }

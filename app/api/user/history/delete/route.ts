@@ -34,6 +34,12 @@ export async function POST(request: NextRequest) {
         }
         const success = await deleteGeneration(id, session.user.id);
         deletedCount = success ? 1 : 0;
+        if (!success) {
+          return NextResponse.json(
+            { error: 'Generation not found or already deleted' },
+            { status: 404, headers: rateLimit.headers }
+          );
+        }
         break;
 
       case 'batch':

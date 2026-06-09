@@ -1,8 +1,13 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { getChatModel, getUserById, updateUserBalance } from '@/lib/db';
 import { checkRateLimit, RateLimitConfig } from '@/lib/rate-limit';
+import {
+  extractChatCompletionContent,
+  readChatCompletionJson,
+  resolveChatCompletionsUrl,
+} from '@/lib/chat-completion';
 
 // Validation constants
 const CHAT_MAX_LENGTH = 2000;
@@ -126,7 +131,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Call the chat API
-    const response = await fetch(model.apiUrl, {
+    const response = await fetch(resolveChatCompletionsUrl(model.apiUrl), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -138,14 +143,8 @@ export async function POST(request: NextRequest) {
         max_tokens: Math.min(4096, model.maxTokens),
       }),
     });
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.error?.message || `API 调用失败: ${response.status}`);
-    }
-
-    const data = await response.json();
-    const assistantContent = data.choices?.[0]?.message?.content || '';
+    const data = await readChatCompletionJson(response);
+    const assistantContent = extractChatCompletionContent(data);
 
     // Deduct balance
     await updateUserBalance(session.user.id, -model.costPerMessage, 'strict');
@@ -165,3 +164,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

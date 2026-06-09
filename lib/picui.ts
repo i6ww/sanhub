@@ -45,9 +45,36 @@ export interface PicUIUploadResponse {
   status: boolean;
   message: string;
   data?: {
+    key?: string;
+    name?: string;
+    origin_name?: string;
     links?: {
       url?: string;
     };
+  };
+}
+
+export interface LskyV2UploadResponse {
+  status: 'success' | 'error' | string;
+  message: string;
+  data?: {
+    public_url?: string;
+    thumbnail_url?: string;
+  } | null;
+}
+
+interface PicUIListResponse {
+  status: boolean;
+  message: string;
+  data?: {
+    data?: Array<{
+      name?: string;
+      origin_name?: string;
+      filename?: string;
+      links?: {
+        url?: string;
+      };
+    }>;
   };
 }
 
@@ -91,6 +118,14 @@ function ensureFilenameExtension(filename: string, extension: string): string {
   const trimmed = normalizeSegment(filename).split('/').pop() || `media_${Date.now()}.${extension}`;
   if (/\.[a-z0-9]{2,5}$/i.test(trimmed)) return trimmed;
   return `${trimmed}.${extension}`;
+}
+
+function extractUrl(value?: string): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  const markdownLink = trimmed.match(/^\[[^\]]+\]\((https?:\/\/[^)]+)\)$/i);
+  if (markdownLink) return markdownLink[1];
+  return /^https?:\/\//i.test(trimmed) ? trimmed : null;
 }
 
 function parseUploadPayload(base64Data: string, filename?: string, bucket?: ImageBucketConfig): UploadPayload {
@@ -201,10 +236,71 @@ async function uploadToPicuiBucket(
   const data = (await response.json()) as PicUIUploadResponse;
   if (!response.ok || !data.status) {
     console.error('[ImageBucket] PicUI upload failed:', data.message);
+    return await findPicuiUploadedUrl(bucket, payload.filename);
+  }
+
+  return extractUrl(data.data?.links?.url);
+}
+
+async function findPicuiUploadedUrl(
+  bucket: ImageBucketConfig,
+  filename: string
+): Promise<string | null> {
+  try {
+    const baseUrl = bucket.baseUrl.replace(/\/$/, '');
+    const params = new URLSearchParams({ page: '1', per_page: '10', q: filename });
+    const response = await undiciFetch(`${baseUrl}/images?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${bucket.apiKey}`,
+        Accept: 'application/json',
+      },
+    });
+
+    const data = (await response.json()) as PicUIListResponse;
+    if (!response.ok || !data.status || !data.data?.data) {
+      return null;
+    }
+
+    const matched = data.data.data.find((image) =>
+      [image.origin_name, image.name, image.filename].includes(filename)
+    );
+    return extractUrl(matched?.links?.url);
+  } catch (error) {
+    console.warn('[ImageBucket] PicUI fallback lookup failed:', error);
+    return null;
+  }
+}
+
+async function uploadToLskyV2Bucket(
+  bucket: ImageBucketConfig,
+  payload: UploadPayload
+): Promise<string | null> {
+  if (!bucket.baseUrl || !bucket.apiKey || !bucket.storageId) return null;
+
+  const buildFormData = () => {
+    const formData = new FormData();
+    formData.append('file', new File([payload.buffer], payload.filename, { type: payload.mimeType }));
+    formData.append('storage_id', bucket.storageId || '');
+    return formData;
+  };
+
+  const apiUrl = `${bucket.baseUrl.replace(/\/$/, '')}/upload`;
+  const response = await fetchWithRetry(undiciFetch, apiUrl, () => ({
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${bucket.apiKey}`,
+      Accept: 'application/json',
+    },
+    body: buildFormData(),
+  }));
+
+  const data = (await response.json()) as LskyV2UploadResponse;
+  if (!response.ok || data.status !== 'success') {
+    console.error('[ImageBucket] Lsky v2 upload failed:', data.message);
     return null;
   }
 
-  return data.data?.links?.url || null;
+  return extractUrl(data.data?.public_url);
 }
 
 function getS3Client(bucket: ImageBucketConfig): S3Client {
@@ -307,6 +403,10 @@ async function uploadPayloadToBucket(
 
   if (!payload.mimeType.startsWith('image/')) {
     return null;
+  }
+
+  if (bucket.provider === 'lsky-v2') {
+    return await uploadToLskyV2Bucket(bucket, payload);
   }
 
   return await uploadToPicuiBucket(bucket, payload);

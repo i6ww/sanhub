@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { updateUserBalance } from '@/lib/db';
+import { createManualBalancePaymentOrder, updateUserBalance } from '@/lib/db';
 
 export async function POST(request: NextRequest) {
   try {
@@ -18,6 +18,14 @@ export async function POST(request: NextRequest) {
     }
 
     const newBalance = await updateUserBalance(userId, delta, 'clamp');
+    if (delta > 0) {
+      await createManualBalancePaymentOrder({
+        userId,
+        points: delta,
+        operatorId: session.user.id,
+        reason: 'admin balance delta',
+      });
+    }
     return NextResponse.json({ success: true, data: { balance: newBalance } });
   } catch (error) {
     return NextResponse.json(

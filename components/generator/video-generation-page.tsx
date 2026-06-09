@@ -75,6 +75,7 @@ export function VideoGenerationView({
   const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
   const filesRef = useRef<Array<{ file: File; preview: string }>>([]);
   const refreshGenerationFeedRef = useRef<() => Promise<void>>(async () => {});
+  const deletedGenerationIdsRef = useRef<Set<string>>(new Set());
   const isActiveRef = useRef(isActive);
   const submissionLockRef = useRef(false);
   const [localExternalReference, setLocalExternalReference] =
@@ -372,10 +373,15 @@ export function VideoGenerationView({
         (generation) =>
           generation.resultUrl &&
           generation.status === 'completed' &&
-          isTerminalGenerationStatus(generation.status)
+          isTerminalGenerationStatus(generation.status) &&
+          !deletedGenerationIdsRef.current.has(generation.id)
       );
       const failedVideoTasks = videoGenerations
-        .filter((generation) => isFailedGenerationStatus(generation.status))
+        .filter(
+          (generation) =>
+            isFailedGenerationStatus(generation.status) &&
+            !deletedGenerationIdsRef.current.has(generation.id)
+        )
         .map(
           (generation) =>
             ({
@@ -490,6 +496,7 @@ export function VideoGenerationView({
           onCompleted: async (generation) => {
             await update();
             setTasks((prev) => prev.filter((task) => task.id !== taskId));
+            if (deletedGenerationIdsRef.current.has(generation.id)) return;
             setGenerations((prev) => mergeGenerationsById(prev, [generation]));
             void loadRecentGenerations();
 
@@ -614,6 +621,7 @@ export function VideoGenerationView({
       if (!confirmed) return;
 
       setBusyGenerationId(generation.id);
+      deletedGenerationIdsRef.current.add(generation.id);
       setGenerations((prev) => prev.filter((item) => item.id !== generation.id));
 
       try {
@@ -623,6 +631,7 @@ export function VideoGenerationView({
         }
         toast({ title: '作品已删除' });
       } catch (err) {
+        deletedGenerationIdsRef.current.delete(generation.id);
         setGenerations((prev) => mergeGenerationsById(prev, [generation]));
         toast({
           title: '删除失败',

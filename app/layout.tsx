@@ -14,7 +14,7 @@ export async function generateMetadata(): Promise<Metadata> {
     title: `${siteConfig.siteName} - AI 内容生成平台`,
     description: siteConfig.siteDescription,
     icons: {
-      icon: '/favicon.ico',
+      icon: '/icon.svg',
     },
   };
 }

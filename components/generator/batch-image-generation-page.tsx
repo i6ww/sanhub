@@ -67,7 +67,7 @@ type BatchSubmitContext = {
 };
 
 const MAX_IMAGES_PER_TASK = 6;
-const MAX_BATCH_TASKS = 30;
+const MAX_BATCH_TASKS = 9;
 const DEFAULT_TASK_COUNT = 6;
 const SUBMIT_PARALLELISM = 3;
 const GLOBAL_MODEL_VALUE = '__global__';
@@ -367,6 +367,12 @@ export function BatchImageGenerationPage() {
       current.map((task) => {
         if (task.id !== taskId) return task;
         const availableSlots = Math.max(0, MAX_IMAGES_PER_TASK - task.images.length);
+        if (imageFiles.length > availableSlots) {
+          toast({
+            title: '\u53c2\u8003\u56fe\u5df2\u8fbe\u5230\u4e0a\u9650',
+            description: `\u6bcf\u4e2a\u4efb\u52a1\u6700\u591a\u652f\u6301 ${MAX_IMAGES_PER_TASK} \u5f20\u53c2\u8003\u56fe`,
+          });
+        }
         const nextImages = imageFiles.slice(0, availableSlots).map((file) => ({
           id: createId('image'),
           file,

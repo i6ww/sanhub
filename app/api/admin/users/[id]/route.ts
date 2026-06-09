@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from 'next/server';
+﻿import { NextRequest, NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
-import { getUserById, updateUser, getUserGenerations } from '@/lib/db';
+import { createManualBalancePaymentOrder, getUserById, updateUser, getUserGenerations } from '@/lib/db';
 
 // 检查是否有管理权限（admin 或 moderator）
 function hasAdminAccess(role: string): boolean {
@@ -90,11 +90,23 @@ export async function PUT(
       updates.role = data.role;
     }
 
+    const previousBalance = targetUser.balance;
     const user = await updateUser(params.id, updates);
     if (!user) {
       return NextResponse.json({ error: '用户不存在' }, { status: 404 });
     }
 
+    if (updates.balance !== undefined) {
+      const addedPoints = user.balance - previousBalance;
+      if (addedPoints > 0) {
+        await createManualBalancePaymentOrder({
+          userId: user.id,
+          points: addedPoints,
+          operatorId: session.user.id,
+          reason: 'admin balance set',
+        });
+      }
+    }
     return NextResponse.json({
       id: user.id,
       email: user.email,
@@ -111,3 +123,4 @@ export async function PUT(
     );
   }
 }
+

@@ -33,6 +33,7 @@ export const maxDuration = 600;
 export const dynamic = 'force-dynamic';
 
 const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_REFERENCE_IMAGES = 6;
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const imageTaskCreationPromises = new Map<string, Promise<Generation>>();
 const IMAGE_TYPE_BY_CHANNEL: Record<ChannelType, GenerationType> = {
@@ -304,6 +305,15 @@ export async function POST(request: NextRequest) {
             data: referenceImage.dataUrl,
           });
         }
+      }
+
+      if (imageList.length > MAX_REFERENCE_IMAGES) {
+        throwRouteResponse(
+          NextResponse.json(
+            { error: `A maximum of ${MAX_REFERENCE_IMAGES} reference images is supported` },
+            { status: 400 }
+          )
+        );
       }
 
       if (model.requiresReferenceImage && imageList.length === 0) {

@@ -359,10 +359,10 @@ const GenerationCard = memo(function GenerationCard({
             <button
               onClick={() => onDownload(gen.resultUrl, gen.id, gen.type)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-card/50 hover:bg-card border border-border hover:border-border/80 text-[11px] font-medium rounded-lg text-foreground/80 hover:text-foreground transition-all shadow-sm"
-              title="下载到本地"
+              title="另存为"
             >
               <Download className="w-3 h-3" />
-              下载
+              另存为
             </button>
             <button
               onClick={() => onView(gen)}
@@ -795,7 +795,7 @@ export default function HistoryPage() {
 
     const extension = type.includes('video') ? 'mp4' : 'png';
     try {
-      await downloadAsset(url, `sanhub-${id}.${extension}`);
+      await downloadAsset(url, `miaotu-${id}.${extension}`);
     } catch (err) {
       console.error('Download failed', err);
       toast({
@@ -1817,7 +1817,7 @@ function FullscreenViewer({
                 className="flex items-center justify-center gap-2 px-5 py-2 bg-foreground text-background rounded-xl hover:opacity-90 transition-colors text-sm font-medium"
               >
                 <Download className="w-3.5 h-3.5" />
-                下载
+                另存为
               </button>
             </div>
           </div>

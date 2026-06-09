@@ -381,7 +381,7 @@ export interface InviteSettingsConfig {
   inviterBonusPoints: number;
 }
 
-export type ImageBucketProvider = 'picui' | 's3-compatible';
+export type ImageBucketProvider = 'picui' | 'lsky-v2' | 's3-compatible';
 
 export interface ImageBucketConfig {
   id: string;
@@ -391,6 +391,7 @@ export interface ImageBucketConfig {
   apiKey: string;
   secretKey?: string;
   bucketName?: string;
+  storageId?: string;
   region?: string;
   publicBaseUrl?: string;
   pathPrefix?: string;
@@ -481,7 +482,7 @@ export interface PaymentOrder {
   userId: string;
   outTradeNo: string;
   providerTradeNo?: string;
-  provider: 'easypay';
+  provider: 'easypay' | 'manual';
   paymentType: string;
   amountCents: number;
   paidAmountCents: number;

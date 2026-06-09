@@ -1,7 +1,13 @@
 /* eslint-disable no-console */
 // 数据库适配器接口
+export type DatabaseMutationResult = {
+  affectedRows?: number;
+  insertId?: number | bigint;
+  changes?: number;
+};
+
 export interface DatabaseAdapter {
-  execute(sql: string, params?: unknown[]): Promise<[unknown[], unknown]>;
+  execute(sql: string, params?: unknown[]): Promise<[unknown[] | DatabaseMutationResult, unknown]>;
   close(): Promise<void>;
 }
 
@@ -146,7 +152,7 @@ export class MySQLAdapter implements DatabaseAdapter {
     );
   }
 
-  async execute(sql: string, params?: unknown[]): Promise<[unknown[], unknown]> {
+  async execute(sql: string, params?: unknown[]): Promise<[unknown[] | DatabaseMutationResult, unknown]> {
     try {
       return await this.pool.execute(sql, params);
     } catch (error) {
@@ -203,7 +209,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
     });
   }
 
-  async execute(sql: string, params?: unknown[]): Promise<[unknown[], unknown]> {
+  async execute(sql: string, params?: unknown[]): Promise<[unknown[] | DatabaseMutationResult, unknown]> {
     // 转换 MySQL 语法到 SQLite
     sql = this.convertSQLToSQLite(sql);
 
@@ -227,7 +233,7 @@ export class SQLiteAdapter implements DatabaseAdapter {
           changes: number;
           lastInsertRowid: number | bigint;
         };
-        return [[{ affectedRows: result.changes, insertId: result.lastInsertRowid }], {}];
+        return [{ affectedRows: result.changes, insertId: result.lastInsertRowid }, {}];
       }
     } catch (error) {
       if (this.shouldLogSQLiteError(error)) {

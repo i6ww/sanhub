@@ -33,12 +33,19 @@ function newBucket(): ImageBucketConfig {
     apiKey: '',
     secretKey: '',
     bucketName: '',
+    storageId: '',
     region: 'auto',
     publicBaseUrl: '',
     pathPrefix: '',
     forcePathStyle: true,
     enabled: true,
   };
+}
+
+function normalizeBucketProvider(value: string): ImageBucketConfig['provider'] {
+  if (value === 's3-compatible') return 's3-compatible';
+  if (value === 'lsky-v2') return 'lsky-v2';
+  return 'picui';
 }
 
 function Card({
@@ -753,7 +760,7 @@ export default function SiteConfigPage() {
                           item.id === bucket.id
                             ? {
                                 ...item,
-                                provider: event.target.value === 's3-compatible' ? 's3-compatible' : 'picui',
+                                provider: normalizeBucketProvider(event.target.value),
                               }
                             : item
                         ),
@@ -763,6 +770,7 @@ export default function SiteConfigPage() {
                   className="rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
                 >
                   <option value="picui">PicUI</option>
+                  <option value="lsky-v2">Lsky v2</option>
                   <option value="s3-compatible">S3 兼容</option>
                 </select>
               </div>
@@ -817,7 +825,7 @@ export default function SiteConfigPage() {
                     },
                   }))
                 }
-                placeholder={bucket.provider === 'picui' ? '接口地址' : 'Endpoint 地址'}
+                placeholder={bucket.provider === 's3-compatible' ? 'Endpoint 地址' : '接口地址'}
                 className="rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
               />
               <input
@@ -833,10 +841,31 @@ export default function SiteConfigPage() {
                     },
                   }))
                 }
-                placeholder={bucket.provider === 'picui' ? 'API Key' : 'Access Key'}
+                placeholder={bucket.provider === 's3-compatible' ? 'Access Key' : 'API Key'}
                 className="rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
               />
             </div>
+
+            {bucket.provider === 'lsky-v2' && (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <input
+                  value={bucket.storageId || ''}
+                  onChange={(event) =>
+                    patch((prev) => ({
+                      ...prev,
+                      imageStorage: {
+                        ...prev.imageStorage,
+                        buckets: prev.imageStorage.buckets.map((item) =>
+                          item.id === bucket.id ? { ...item, storageId: event.target.value } : item
+                        ),
+                      },
+                    }))
+                  }
+                  placeholder="Storage ID"
+                  className="rounded-lg border border-border/70 bg-card/60 px-4 py-3 text-foreground focus:outline-none"
+                />
+              </div>
+            )}
 
             {bucket.provider === 's3-compatible' && (
               <div className="space-y-3">

@@ -13,6 +13,7 @@ import {
   Workflow,
   Images,
   CreditCard,
+  MessageSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { SafeUser } from '@/types';
@@ -36,6 +37,7 @@ function formatRelativeTime(timestamp: number | null): string {
 const navItems = [
   { href: '/create', icon: Sparkles, label: '创作', description: '图片 / 视频统一入口', badge: 'AI', isAI: true },
   { href: '/batch-image', icon: Images, label: '\u6279\u91cf\u751f\u56fe', description: '\u591a\u63d0\u793a\u8bcd / \u591a\u53c2\u8003\u56fe', badge: 'BATCH', isAI: true },
+  { href: '/chat', icon: MessageSquare, label: '\u5bf9\u8bdd\u804a\u5929', description: '\u63a8\u7406\u5927\u6a21\u578b', badge: 'CHAT', isAI: true },
   { href: '/workspace', icon: Workflow, label: '工作空间', description: '可视化工作流画布', badge: null, isAI: true },
   { href: '/video/character-card', icon: User, label: '角色卡生成', description: '从视频提取角色', badge: 'NEW', isAI: true },
   { href: '/square', icon: LayoutGrid, label: '广场', description: '探索社区创作', badge: 'HOT', isAI: false },
