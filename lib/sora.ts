@@ -903,6 +903,18 @@ async function generateViaExternalChat(
     }
     const upstreamError = extractUpstreamErrorMessage(parsedBody);
     const detail = upstreamError || compactSnippet(rawBody, 400);
+    logError('[Video Adapter] External chat failed:', {
+      channelType: channel.type,
+      channelName: channel.name,
+      apiUrl,
+      status: response.status,
+      statusText: (response as { statusText?: string }).statusText || '',
+      model: resolvedModel,
+      stream: useStreamingResponse,
+      imageCount: files.filter((file) => file.mimeType.startsWith('image/')).length,
+      videoConfig: channel.type === 'grok2api' ? payload.video_config : undefined,
+      response: detail || compactSnippet(rawBody, 400),
+    });
     throw new Error(`上游返回错误 (${response.status})${detail ? `: ${detail}` : ''}`);
   }
 
