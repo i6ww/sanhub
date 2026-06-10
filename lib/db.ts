@@ -1642,7 +1642,7 @@ export async function completeGenerationJob(jobId: string): Promise<void> {
   const now = Date.now();
   await db.execute(
     `UPDATE generation_jobs
-     SET status = 'succeeded', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?
+     SET status = 'succeeded', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?
      WHERE id = ?`,
     [now, now, jobId]
   );
@@ -1669,7 +1669,7 @@ export async function failGenerationJob(
 
   await db.execute(
     `UPDATE generation_jobs
-     SET status = 'failed', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?, error_message = ?
+     SET status = 'failed', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?, error_message = ?
      WHERE id = ?`,
     [now, now, errorMessage, jobId]
   );
@@ -1995,6 +1995,11 @@ export async function deleteGeneration(id: string, userId: string): Promise<bool
   await initializeDatabase();
   const db = getAdapter();
 
+  await db.execute(
+    'DELETE FROM generation_jobs WHERE generation_id = ? AND user_id = ?',
+    [id, userId]
+  );
+
   const [result] = await db.execute(
     'DELETE FROM generations WHERE id = ? AND user_id = ?',
     [id, userId]
@@ -2011,6 +2016,11 @@ export async function deleteGenerations(ids: string[], userId: string): Promise<
   const db = getAdapter();
 
   const placeholders = ids.map(() => '?').join(',');
+  await db.execute(
+    `DELETE FROM generation_jobs WHERE generation_id IN (${placeholders}) AND user_id = ?`,
+    [...ids, userId]
+  );
+
   const [result] = await db.execute(
     `DELETE FROM generations WHERE id IN (${placeholders}) AND user_id = ?`,
     [...ids, userId]
@@ -2025,6 +2035,16 @@ export async function deleteAllUserGenerations(userId: string): Promise<number> 
   const db = getAdapter();
 
   // 只删除已完成或失败的，保留进行中的任务
+  await db.execute(
+    `DELETE FROM generation_jobs
+     WHERE user_id = ?
+       AND generation_id IN (
+         SELECT id FROM generations
+         WHERE user_id = ? AND status NOT IN ('pending', 'processing')
+       )`,
+    [userId, userId]
+  );
+
   const [result] = await db.execute(
     `DELETE FROM generations WHERE user_id = ? AND status NOT IN ('pending', 'processing')`,
     [userId]
@@ -2037,6 +2057,16 @@ export async function deleteAllUserGenerations(userId: string): Promise<number> 
 export async function deleteAllFailedGenerations(userId: string): Promise<number> {
   await initializeDatabase();
   const db = getAdapter();
+
+  await db.execute(
+    `DELETE FROM generation_jobs
+     WHERE user_id = ?
+       AND generation_id IN (
+         SELECT id FROM generations
+         WHERE user_id = ? AND status IN ('failed', 'cancelled')
+       )`,
+    [userId, userId]
+  );
 
   const [result] = await db.execute(
     `DELETE FROM generations WHERE user_id = ? AND status IN ('failed', 'cancelled')`,
