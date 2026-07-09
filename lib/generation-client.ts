@@ -56,6 +56,15 @@ export function isFailedGenerationStatus(status?: string): status is 'failed' | 
   return status === 'failed' || status === 'cancelled';
 }
 
+function isSuccessfulGenerationPayload(payload?: GenerationStatusPayload): payload is GenerationStatusPayload {
+  return Boolean(
+    payload &&
+      (payload.status === 'completed' ||
+        payload.status === 'succeeded' ||
+        payload.url)
+  );
+}
+
 export function isVideoGenerationType(type?: string): boolean {
   return Boolean(type && type.includes('video'));
 }
@@ -322,9 +331,24 @@ export async function pollGenerationTask(
   const startedAt = Date.now();
   let consecutiveErrors = 0;
 
+  const completeIfAlreadyFinished = async (): Promise<boolean> => {
+    try {
+      const latest = await fetchGenerationStatus(taskId, signal);
+      if (isSuccessfulGenerationPayload(latest)) {
+        await onCompleted(buildCompletedGeneration(latest, taskPrompt), latest);
+        return true;
+      }
+    } catch {
+      // Keep the original failure or timeout path when the confirmation request fails.
+    }
+
+    return false;
+  };
+
   while (!signal?.aborted) {
     const elapsed = Date.now() - startedAt;
     if (!shouldContinuePolling(elapsed, taskType)) {
+      if (await completeIfAlreadyFinished()) return;
       await onTimeout();
       return;
     }
@@ -334,11 +358,12 @@ export async function pollGenerationTask(
       consecutiveErrors = 0;
 
       if (payload.status === 'failed' || payload.status === 'cancelled') {
+        if (await completeIfAlreadyFinished()) return;
         await onFailed(getFriendlyErrorMessage(payload.errorMessage || 'Generation failed'), payload);
         return;
       }
 
-      if (payload.status === 'completed' || payload.status === 'succeeded' || payload.url) {
+      if (isSuccessfulGenerationPayload(payload)) {
         await onCompleted(buildCompletedGeneration(payload, taskPrompt), payload);
         return;
       }
@@ -359,6 +384,7 @@ export async function pollGenerationTask(
         continue;
       }
 
+      if (await completeIfAlreadyFinished()) return;
       await onFailed(getFriendlyErrorMessage(message));
       return;
     }
