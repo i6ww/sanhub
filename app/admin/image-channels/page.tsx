@@ -11,6 +11,7 @@ import type { ImageChannel, ImageModel, ImageModelFeatures } from '@/types';
 const CHANNEL_TYPES = [
   { value: 'apexerapi', label: 'adobe2api', description: 'adobe2api image gateway' },
   { value: 'openai-compatible', label: 'OpenAI Images', description: 'OpenAI /v1/images/generations API' },
+  { value: 'openai-edits', label: 'OpenAI Edits', description: 'OpenAI /v1/images/edits API' },
   { value: 'openai-chat', label: 'OpenAI Chat', description: 'OpenAI /v1/chat/completions API' },
   { value: 'gemini', label: 'Gemini', description: 'Google Gemini Native API' },
   { value: 'modelscope', label: 'ModelScope', description: 'ModelScope API' },
@@ -161,6 +162,12 @@ const CHANNEL_FORM_GUIDES: Record<ImageAdminChannelType, {
     hint: '优先填写可访问的 Base URL，保存后可直接从 /v1/models 智能拉取模型。',
     recommendedAction: '先保存渠道，再点“智能导入远端模型”',
   },
+  'openai-edits': {
+    defaultName: 'OpenAI Edits',
+    summary: '适合通过 /v1/images/edits 接入 GPT Image 2 一类参考图编辑模型。',
+    hint: '创建渠道后建议直接套用 GPT Image 2 预设，模型会默认要求上传参考图。',
+    recommendedAction: '先保存渠道，再套用 GPT Image 2 预设',
+  },
   apexerapi: {
     defaultName: 'adobe2api',
     summary: '适合接入 adobe2api，覆盖 Banana Pro、Banana 2 和 GPT Image 2。',
@@ -212,6 +219,9 @@ const MANUAL_PRESET_OPTIONS: Record<ImageAdminChannelType, ModelPresetOption[]> 
     { id: 'general', label: '标准生图', description: '适合常规文生图，带默认常用比例。' },
     { id: 'edit', label: '编辑变体', description: '适合编辑、局部重绘或 variation 场景。' },
     { id: 'hd', label: '高清多档', description: '适合需要 1K / 2K / 4K 多档分辨率的模型。' },
+  ],
+  'openai-edits': [
+    { id: 'edit', label: 'GPT Image 2', description: 'OpenAI /v1/images/edits，默认要求参考图。' },
   ],
   'openai-chat': [
     { id: 'general', label: '标准生图', description: '适合兼容聊天接口的图像生成模型。' },
@@ -338,19 +348,31 @@ function buildModelPreset(channelType: ImageAdminChannelType, presetId: ModelPre
   }
 
   if (presetId === 'edit') {
-    form.name = channelType === 'apexerapi' ? 'GPT Image 2' : channelType === 'modelscope' ? 'Qwen Image Edit' : '图像编辑模型';
+    form.name =
+      channelType === 'apexerapi' || channelType === 'openai-edits'
+        ? 'GPT Image 2'
+        : channelType === 'modelscope'
+        ? 'Qwen Image Edit'
+        : '图像编辑模型';
     form.description = channelType === 'apexerapi'
       ? '适合文生图和多参考图编辑，支持 GPT Image 2 quality 参数。'
+      : channelType === 'openai-edits'
+      ? '适合参考图编辑，走 OpenAI /v1/images/edits。'
       : '适合编辑、重绘或 variation，默认要求上传参考图。';
-    form.apiModel = channelType === 'apexerapi' ? 'gpt-image-2' : channelType === 'modelscope' ? 'Qwen/Qwen-Image-Edit-2509' : '';
+    form.apiModel =
+      channelType === 'apexerapi' || channelType === 'openai-edits'
+        ? 'gpt-image-2'
+        : channelType === 'modelscope'
+        ? 'Qwen/Qwen-Image-Edit-2509'
+        : '';
     form.features = {
       textToImage: channelType === 'apexerapi',
       imageToImage: true,
       upscale: false,
       matting: false,
-      multipleImages: channelType === 'apexerapi',
+      multipleImages: channelType === 'apexerapi' || channelType === 'openai-edits',
       imageSize: false,
-      qualityOptions: channelType === 'apexerapi' ? ['low', 'medium', 'high'] : undefined,
+      qualityOptions: channelType === 'apexerapi' || channelType === 'openai-edits' ? ['low', 'medium', 'high'] : undefined,
     };
     form.requiresReferenceImage = channelType !== 'apexerapi';
   }
@@ -666,7 +688,11 @@ export default function ImageChannelsPage() {
   const startAddModel = (channelId: string) => {
     const channel = channels.find((item) => item.id === channelId);
     const channelType = toImageAdminChannelType(channel?.type);
-    const presetId: ModelPresetId = channelType === 'gemini' ? 'hd' : 'general';
+    const presetId: ModelPresetId = channelType === 'gemini'
+      ? 'hd'
+      : channelType === 'openai-edits'
+      ? 'edit'
+      : 'general';
     const preset = buildModelPreset(channelType, presetId);
 
     setModelForm({
@@ -989,6 +1015,10 @@ export default function ImageChannelsPage() {
     try {
       let added = 0;
       const existingApiModels = getExistingApiModelSet(remoteModelsChannelId);
+      const remoteChannelType = toImageAdminChannelType(
+        channels.find((item) => item.id === remoteModelsChannelId)?.type
+      );
+      const isOpenAIEditsChannel = remoteChannelType === 'openai-edits';
 
       // Add grouped models
       for (const baseName of Array.from(selectedGroupedModels)) {
@@ -1009,18 +1039,20 @@ export default function ImageChannelsPage() {
             apiModel: group.apiModel,
             description,
             features: {
-              textToImage: group.features.textToImage,
-              imageToImage: group.features.imageToImage,
+              textToImage: isOpenAIEditsChannel ? false : group.features.textToImage,
+              imageToImage: isOpenAIEditsChannel ? true : group.features.imageToImage,
               upscale: false,
               matting: false,
-              multipleImages: false,
+              multipleImages: isOpenAIEditsChannel,
               imageSize: group.features.imageSize,
+              qualityOptions: isOpenAIEditsChannel ? ['low', 'medium', 'high'] : undefined,
             },
             aspectRatios: group.aspectRatios,
             imageSizes: group.features.imageSize ? group.imageSizes : undefined,
             resolutions: group.resolutions,
             defaultAspectRatio: group.aspectRatios.includes('1:1') ? '1:1' : group.aspectRatios[0],
             defaultImageSize: group.features.imageSize ? (group.imageSizes.includes('1K') ? '1K' : group.imageSizes[0]) : undefined,
+            requiresReferenceImage: isOpenAIEditsChannel,
             enabled: true,
             costPerGeneration: 10,
             sortOrder: nextSortOrder,
@@ -1045,10 +1077,19 @@ export default function ImageChannelsPage() {
             name: modelId,
             apiModel: modelId,
             description: '',
-            features: { textToImage: true, imageToImage: true, upscale: false, matting: false, multipleImages: false, imageSize: false },
+            features: {
+              textToImage: !isOpenAIEditsChannel,
+              imageToImage: true,
+              upscale: false,
+              matting: false,
+              multipleImages: isOpenAIEditsChannel,
+              imageSize: false,
+              qualityOptions: isOpenAIEditsChannel ? ['low', 'medium', 'high'] : undefined,
+            },
             aspectRatios: ['1:1', '16:9', '9:16'],
             resolutions: { '1:1': '1024x1024', '16:9': '1792x1024', '9:16': '1024x1792' },
             defaultAspectRatio: '1:1',
+            requiresReferenceImage: isOpenAIEditsChannel,
             enabled: true,
             costPerGeneration: 10,
             sortOrder: nextSortOrder,
@@ -1724,7 +1765,7 @@ export default function ImageChannelsPage() {
                       >
                         <Plus className="w-4 h-4" />
                       </button>
-                      {(channel.type === 'apexerapi' || channel.type === 'openai-chat' || channel.type === 'openai-compatible') && (
+                      {(channel.type === 'apexerapi' || channel.type === 'openai-chat' || channel.type === 'openai-compatible' || channel.type === 'openai-edits') && (
                         <button
                           onClick={() => fetchRemoteModels(channel.id)}
                           disabled={fetchingRemoteModels}

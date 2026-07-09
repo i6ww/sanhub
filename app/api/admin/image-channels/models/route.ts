@@ -297,7 +297,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Channel has no baseUrl configured' }, { status: 400 });
     }
 
-    if (channel.type !== 'apexerapi' && channel.type !== 'openai-chat' && channel.type !== 'openai-compatible') {
+    if (
+      channel.type !== 'apexerapi' &&
+      channel.type !== 'openai-chat' &&
+      channel.type !== 'openai-compatible' &&
+      channel.type !== 'openai-edits'
+    ) {
       return NextResponse.json(
         { error: 'This channel type does not support fetching remote models' },
         { status: 400 }

@@ -15,6 +15,7 @@ export const dynamic = 'force-dynamic';
 const IMAGE_CHANNEL_TYPES: ChannelType[] = [
   'apexerapi',
   'openai-compatible',
+  'openai-edits',
   'openai-chat',
   'modelscope',
   'gitee',
@@ -31,6 +32,8 @@ const IMAGE_CHANNEL_TYPE_ALIASES: Record<string, ChannelType> = {
   openai: 'openai-compatible',
   openai_compatible: 'openai-compatible',
   'openai-compatible': 'openai-compatible',
+  openai_edits: 'openai-edits',
+  'openai-edits': 'openai-edits',
   openai_chat: 'openai-chat',
   'openai-chat': 'openai-chat',
   modelscope: 'modelscope',

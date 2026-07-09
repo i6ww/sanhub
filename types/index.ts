@@ -174,6 +174,7 @@ export interface ModelDisabledConfig {
 export type ChannelType =
   | 'apexerapi'
   | 'openai-compatible'
+  | 'openai-edits'
   | 'openai-chat'
   | 'modelscope'
   | 'gitee'

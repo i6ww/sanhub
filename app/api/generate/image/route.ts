@@ -39,6 +39,7 @@ const imageTaskCreationPromises = new Map<string, Promise<Generation>>();
 const IMAGE_TYPE_BY_CHANNEL: Record<ChannelType, GenerationType> = {
   apexerapi: 'gemini-image',
   'openai-compatible': 'gemini-image',
+  'openai-edits': 'gemini-image',
   'openai-chat': 'gemini-image',
   gemini: 'gemini-image',
   modelscope: 'zimage-image',

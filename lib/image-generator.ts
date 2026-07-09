@@ -3,7 +3,7 @@
  * 根据渠道类型动态选择请求方式
  */
 
-import { fetch as undiciFetch, Agent } from 'undici';
+import { fetch as undiciFetch, Agent, File, FormData } from 'undici';
 import { getImageModelWithChannel } from './db';
 import { uploadToPicUI } from './picui';
 import { fetchWithRetry } from './http-retry';
@@ -373,6 +373,30 @@ function buildOpenAIImageInput(
   return refs.length === 1 ? refs[0] : refs;
 }
 
+function imageExtensionFromMimeType(mimeType: string): string {
+  const normalized = mimeType.toLowerCase();
+  if (normalized.includes('png')) return 'png';
+  if (normalized.includes('webp')) return 'webp';
+  if (normalized.includes('gif')) return 'gif';
+  return 'jpg';
+}
+
+function appendOpenAIEditsImage(
+  form: FormData,
+  fieldName: string,
+  image: NonNullable<ImageGenerateRequest['images']>[number],
+  index: number
+) {
+  const match = image.data.match(/^data:([^;]+);base64,(.+)$/);
+  const mimeType = match?.[1] || image.mimeType || 'image/jpeg';
+  const base64 = match?.[2] || image.data;
+  const buffer = Buffer.from(base64, 'base64');
+  const bytes = new Uint8Array(buffer);
+  const extension = imageExtensionFromMimeType(mimeType);
+  const file = new File([bytes], `image_${index + 1}.${extension}`, { type: mimeType });
+  form.append(fieldName, file);
+}
+
 function isGoogleGeminiNativeBaseUrl(baseUrl: string): boolean {
   return baseUrl.toLowerCase().includes('generativelanguage.googleapis.com');
 }
@@ -578,6 +602,71 @@ async function generateWithOpenAI(
     type: 'gemini-image', // 统一类型
     url: resultUrl,
     cost: 0, // 由调用方设置
+  };
+}
+
+async function generateWithOpenAIEdits(
+  request: ImageGenerateRequest,
+  baseUrl: string,
+  apiKey: string,
+  target: ResolvedImageTarget,
+  channelId: string
+): Promise<GenerateResult> {
+  const images = request.images || [];
+  if (images.length === 0) {
+    throw new Error('OpenAI Edits 渠道需要至少一张参考图');
+  }
+
+  const key = getNextApiKey(apiKey, channelId);
+  const url = `${baseUrl.replace(/\/$/, '')}/v1/images/edits`;
+  const normalizedSize = normalizePixelSize(target.size || request.size) || target.size || request.size;
+  const form = new FormData();
+
+  form.append('model', target.model);
+  form.append('prompt', request.prompt);
+  form.append('n', '1');
+
+  if (normalizedSize && !normalizeAspectRatio(normalizedSize)) {
+    form.append('size', normalizedSize.replace(/×/g, 'x'));
+  }
+  if (request.quality) {
+    form.append('quality', request.quality);
+  }
+
+  const imageFieldName = images.length > 1 ? 'image[]' : 'image';
+  images.forEach((image, index) => {
+    appendOpenAIEditsImage(form, imageFieldName, image, index);
+  });
+
+  const response = await fetchWithRetry(undiciFetch, url, () => ({
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${key}`,
+      ...(request.idempotencyKey
+        ? {
+            'Idempotency-Key': request.idempotencyKey,
+            'X-Idempotency-Key': request.idempotencyKey,
+          }
+        : {}),
+    },
+    body: form,
+    dispatcher: imageAgent,
+  }), GENERATION_POST_RETRY_OPTIONS);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI Edits API 错误 (${response.status}): ${errorText}`);
+  }
+
+  const data: any = await response.json();
+  const imageData = data.data?.[0];
+  const resultUrl = pickGeneratedImage(data, imageData);
+  if (!resultUrl) throwMissingImage(data);
+
+  return {
+    type: 'gemini-image',
+    url: resultUrl,
+    cost: 0,
   };
 }
 
@@ -1355,6 +1444,16 @@ export async function generateImage(request: ImageGenerateRequest): Promise<Gene
     case 'apexerapi':
     case 'openai-compatible':
       result = await generateWithOpenAI(
+        request,
+        effectiveBaseUrl,
+        effectiveApiKey,
+        resolvedTarget,
+        channel.id
+      );
+      break;
+
+    case 'openai-edits':
+      result = await generateWithOpenAIEdits(
         request,
         effectiveBaseUrl,
         effectiveApiKey,
