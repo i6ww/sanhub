@@ -135,6 +135,8 @@ export function getGenerationErrorCopy(error: unknown): FriendlyGenerationError 
   if (
     normalized.includes('缺少提示词') ||
     normalized.includes('需要提示词') ||
+    normalized.includes('必须填写提示词') ||
+    normalized.includes('不能只上传参考图') ||
     normalized.includes('缺少参考图') ||
     normalized.includes('提示词或参考图') ||
     normalized.includes('上传参考图') ||
@@ -152,6 +154,8 @@ export function getGenerationErrorCopy(error: unknown): FriendlyGenerationError 
       lowerMsg.includes('prompt is required') ||
       lowerMsg.includes('missing prompt') ||
       normalized.includes('需要提示词') ||
+      normalized.includes('必须填写提示词') ||
+      normalized.includes('不能只上传参考图') ||
       normalized.includes('缺少提示词')
     ) {
       return {
