@@ -357,6 +357,21 @@ export function ImageGenerationPage({
     );
   }, []);
 
+  const keepTaskPendingAfterPollingIssue = useCallback((taskId: string, errorMessage: string) => {
+    setTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId
+          ? {
+              ...task,
+              status: task.status === 'processing' ? 'processing' : 'pending',
+              errorMessage,
+              persisted: false,
+            }
+          : task
+      )
+    );
+  }, []);
+
   const handleClearFailedTasks = useCallback(async () => {
     if (clearingFailedTasks) return;
 
@@ -443,7 +458,7 @@ export function ImageGenerationPage({
           },
           onFailed: async (errorMessage, payload) => {
             if (!payload) {
-              markTaskAsFailed(taskId, errorMessage, false);
+              keepTaskPendingAfterPollingIssue(taskId, errorMessage);
               shouldResyncAfterPoll = true;
               return;
             }
@@ -451,7 +466,10 @@ export function ImageGenerationPage({
             markTaskAsFailed(taskId, errorMessage, true);
           },
           onTimeout: async () => {
-            markTaskAsFailed(taskId, '任务查询超时，请稍后刷新或到历史记录查看最终状态', false);
+            keepTaskPendingAfterPollingIssue(
+              taskId,
+              'Polling paused. The task may still finish; check history for the final result.'
+            );
             shouldResyncAfterPoll = true;
           },
         });
@@ -462,7 +480,7 @@ export function ImageGenerationPage({
         }
       }
     },
-    [loadRecentGenerations, markTaskAsFailed, update]
+    [keepTaskPendingAfterPollingIssue, loadRecentGenerations, markTaskAsFailed, update]
   );
 
   const loadPendingTasks = useCallback(async () => {
@@ -601,12 +619,12 @@ export function ImageGenerationPage({
       return '请上传参考图';
     }
 
-    if (currentModel.channelType === 'gemini') {
-      if (!prompt.trim() && !hasReferenceInput) {
-        return '请输入提示词或上传参考图片';
-      }
-    } else if (!currentModel.allowEmptyPrompt && !prompt.trim() && !hasReferenceInput) {
-      return '请输入提示词或上传参考图';
+    if (!prompt.trim() && !currentModel.allowEmptyPrompt) {
+      return 'This model requires a prompt';
+    }
+
+    if (!prompt.trim() && !hasReferenceInput) {
+      return 'Please enter a prompt or upload a reference image';
     }
 
     return null;

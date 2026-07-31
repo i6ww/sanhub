@@ -20,6 +20,21 @@ function getAdapter(): DatabaseAdapter {
   return adapter;
 }
 
+function isMySqlDatabase(): boolean {
+  return (process.env.DB_TYPE || 'sqlite').toLowerCase() === 'mysql';
+}
+
+function getLocalMediaFilenameFromResultUrl(resultUrl: string): string | null {
+  const trimmed = resultUrl.trim();
+  if (!trimmed.startsWith('file:')) return null;
+
+  const rawFilename = trimmed.slice(5).trim();
+  if (!rawFilename) return null;
+
+  const normalized = rawFilename.replace(/\\/g, '/').split('/').pop() || '';
+  return normalized || null;
+}
+
 // ========================================
 // 数据库初始化
 // ========================================
@@ -1480,6 +1495,68 @@ export async function updateGeneration(
   return getGeneration(id);
 }
 
+export async function updateGenerationIfLockedByJob(
+  id: string,
+  jobId: string,
+  workerId: string,
+  updates: Partial<Pick<Generation, 'status' | 'resultUrl' | 'errorMessage' | 'params' | 'balancePrecharged' | 'balanceRefunded'>>
+): Promise<Generation | null> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const fields: string[] = ['updated_at = ?'];
+  const values: unknown[] = [Date.now()];
+
+  if (updates.status !== undefined) {
+    fields.push('status = ?');
+    values.push(updates.status);
+  }
+  if (updates.resultUrl !== undefined) {
+    fields.push('result_url = ?');
+    values.push(updates.resultUrl);
+  }
+  if (updates.params !== undefined) {
+    fields.push('params = ?');
+    values.push(JSON.stringify(updates.params));
+  }
+  if (updates.balancePrecharged !== undefined) {
+    fields.push('balance_precharged = ?');
+    values.push(updates.balancePrecharged ? 1 : 0);
+  }
+  if (updates.balanceRefunded !== undefined) {
+    fields.push('balance_refunded = ?');
+    values.push(updates.balanceRefunded ? 1 : 0);
+  }
+  if (updates.errorMessage !== undefined) {
+    fields.push('error_message = ?');
+    values.push(updates.errorMessage);
+  }
+
+  const now = Date.now();
+  values.push(id, jobId, workerId, now);
+  const [result] = await db.execute(
+    `UPDATE generations
+     SET ${fields.join(', ')}
+     WHERE id = ?
+       AND EXISTS (
+         SELECT 1
+         FROM generation_jobs
+         WHERE id = ?
+           AND generation_id = generations.id
+           AND status = 'running'
+           AND locked_by = ?
+           AND locked_until >= ?
+       )`,
+    values
+  );
+
+  if (getAffectedRows(result) <= 0) {
+    return null;
+  }
+
+  return getGeneration(id);
+}
+
 export async function refundGenerationBalance(
   generationId: string,
   userId: string,
@@ -1604,7 +1681,8 @@ export async function claimGenerationJobs(
   const lockedUntil = now + Math.max(30_000, Number(lockTimeoutMs) || 30_000);
   const [rows] = await db.execute(
     `SELECT * FROM generation_jobs
-     WHERE status = 'queued' OR (status = 'running' AND locked_until < ?)
+     WHERE attempts < max_attempts
+       AND (status = 'queued' OR (status = 'running' AND locked_until < ?))
      ORDER BY created_at ASC
      LIMIT ${safeLimit}`,
     [now]
@@ -1615,7 +1693,9 @@ export async function claimGenerationJobs(
     const [result] = await db.execute(
       `UPDATE generation_jobs
        SET status = 'running', attempts = attempts + 1, locked_by = ?, locked_until = ?, started_at = ?, updated_at = ?, error_message = NULL
-       WHERE id = ? AND (status = 'queued' OR (status = 'running' AND locked_until < ?))`,
+       WHERE id = ?
+         AND attempts < max_attempts
+         AND (status = 'queued' OR (status = 'running' AND locked_until < ?))`,
       [workerId, lockedUntil, now, now, row.id, now]
     );
 
@@ -1636,55 +1716,232 @@ export async function claimGenerationJobs(
   return claimed;
 }
 
-export async function completeGenerationJob(jobId: string): Promise<void> {
+export async function completeGenerationJob(
+  jobId: string,
+  workerId: string,
+  generationId: string,
+  updates: Partial<Pick<Generation, 'resultUrl' | 'params'>>
+): Promise<boolean> {
   await initializeDatabase();
   const db = getAdapter();
   const now = Date.now();
-  await db.execute(
-    `UPDATE generation_jobs
-     SET status = 'succeeded', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?
-     WHERE id = ?`,
-    [now, now, jobId]
+
+  if (!isMySqlDatabase()) {
+    const generation = await updateGenerationIfLockedByJob(generationId, jobId, workerId, {
+      status: 'completed',
+      resultUrl: updates.resultUrl,
+      params: updates.params,
+      errorMessage: '',
+    });
+    if (!generation) return false;
+
+    const [result] = await db.execute(
+      `UPDATE generation_jobs
+       SET status = 'succeeded', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?
+       WHERE id = ? AND status = 'running' AND locked_by = ?`,
+      [now, now, jobId, workerId]
+    );
+    return getAffectedRows(result) > 0;
+  }
+
+  const fields: string[] = ['g.updated_at = ?', 'g.status = ?'];
+  const values: unknown[] = [now, 'completed'];
+
+  if (updates.resultUrl !== undefined) {
+    fields.push('g.result_url = ?');
+    values.push(updates.resultUrl);
+  }
+  if (updates.params !== undefined) {
+    fields.push('g.params = ?');
+    values.push(JSON.stringify(updates.params));
+  }
+
+  fields.push(
+    'g.error_message = NULL',
+    "j.status = 'succeeded'",
+    "j.payload = '{}'",
+    "j.locked_by = ''",
+    "j.error_message = NULL",
+    'j.locked_until = 0',
+    'j.finished_at = ?',
+    'j.updated_at = ?'
   );
+  values.push(now, now, jobId, workerId, now, generationId);
+
+  const [result] = await db.execute(
+    `UPDATE generations g
+     JOIN generation_jobs j ON j.generation_id = g.id
+     SET ${fields.join(', ')}
+     WHERE j.id = ?
+       AND j.status = 'running'
+       AND j.locked_by = ?
+       AND j.locked_until >= ?
+       AND g.id = ?`,
+    values
+  );
+  return getAffectedRows(result) > 0;
 }
 
 export async function failGenerationJob(
   jobId: string,
+  workerId: string,
+  generationId: string,
   errorMessage: string,
-  retry: boolean
-): Promise<void> {
+  retry: boolean,
+  updates: Partial<Pick<Generation, 'params'>> = {}
+): Promise<boolean> {
   await initializeDatabase();
   const db = getAdapter();
   const now = Date.now();
 
-  if (retry) {
-    await db.execute(
+  if (!isMySqlDatabase()) {
+    const generation = await updateGenerationIfLockedByJob(generationId, jobId, workerId, {
+      status: retry ? 'pending' : 'failed',
+      errorMessage,
+      params: updates.params,
+    });
+    if (!generation) return false;
+
+    if (retry) {
+      const [result] = await db.execute(
+        `UPDATE generation_jobs
+         SET status = 'queued', locked_by = '', locked_until = 0, updated_at = ?, error_message = ?
+         WHERE id = ? AND status = 'running' AND locked_by = ?`,
+        [now, errorMessage, jobId, workerId]
+      );
+      return getAffectedRows(result) > 0;
+    }
+
+    const [result] = await db.execute(
       `UPDATE generation_jobs
-       SET status = 'queued', locked_by = '', locked_until = 0, updated_at = ?, error_message = ?
-       WHERE id = ?`,
-      [now, errorMessage, jobId]
+       SET status = 'failed', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?, error_message = ?
+       WHERE id = ? AND status = 'running' AND locked_by = ?`,
+      [now, now, errorMessage, jobId, workerId]
     );
-    return;
+    return getAffectedRows(result) > 0;
   }
 
-  await db.execute(
-    `UPDATE generation_jobs
-     SET status = 'failed', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?, error_message = ?
-     WHERE id = ?`,
-    [now, now, errorMessage, jobId]
+  const fields: string[] = ['g.updated_at = ?', 'g.error_message = ?'];
+  const values: unknown[] = [now, errorMessage];
+  if (updates.params !== undefined) {
+    fields.push('g.params = ?');
+    values.push(JSON.stringify(updates.params));
+  }
+
+  if (retry) {
+    fields.push('g.status = ?');
+    values.push('pending');
+  } else {
+    fields.push('g.status = ?');
+    values.push('failed');
+    fields.push(
+      "j.status = 'failed'",
+      "j.payload = '{}'",
+      "j.locked_by = ''",
+      'j.locked_until = 0',
+      'j.finished_at = ?'
+    );
+    values.push(now);
+  }
+
+  if (retry) {
+    fields.push(
+      "j.status = 'queued'",
+      "j.locked_by = ''",
+      'j.locked_until = 0',
+      'j.updated_at = ?',
+      'j.error_message = ?'
+    );
+    values.push(now, errorMessage);
+  } else {
+    fields.push('j.updated_at = ?', 'j.error_message = ?');
+    values.push(now, errorMessage);
+  }
+
+  values.push(jobId, workerId, now, generationId);
+  const [result] = await db.execute(
+    `UPDATE generations g
+     JOIN generation_jobs j ON j.generation_id = g.id
+     SET ${fields.join(', ')}
+     WHERE j.id = ?
+       AND j.status = 'running'
+       AND j.locked_by = ?
+       AND j.locked_until >= ?
+       AND g.id = ?`,
+    values
   );
+  return getAffectedRows(result) > 0;
 }
 
-export async function releaseGenerationJob(jobId: string, errorMessage: string): Promise<void> {
+export async function releaseGenerationJob(jobId: string, workerId: string, errorMessage: string): Promise<boolean> {
   await initializeDatabase();
   const db = getAdapter();
   const now = Date.now();
-  await db.execute(
+  const [result] = await db.execute(
     `UPDATE generation_jobs
      SET status = 'queued', attempts = CASE WHEN attempts > 0 THEN attempts - 1 ELSE 0 END, locked_by = '', locked_until = 0, updated_at = ?, error_message = ?
-     WHERE id = ? AND status = 'running'`,
-    [now, errorMessage, jobId]
+     WHERE id = ? AND status = 'running' AND locked_by = ?`,
+    [now, errorMessage, jobId, workerId]
   );
+  return getAffectedRows(result) > 0;
+}
+
+export async function renewGenerationJobLock(
+  jobId: string,
+  workerId: string,
+  lockTimeoutMs: number
+): Promise<boolean> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const now = Date.now();
+  const lockedUntil = now + Math.max(30_000, Number(lockTimeoutMs) || 30_000);
+  const [result] = await db.execute(
+    `UPDATE generation_jobs
+     SET locked_until = ?, updated_at = ?
+     WHERE id = ? AND status = 'running' AND locked_by = ?`,
+    [lockedUntil, now, jobId, workerId]
+  );
+  return getAffectedRows(result) > 0;
+}
+
+export async function sweepExpiredGenerationJobs(limit: number): Promise<GenerationJob[]> {
+  await initializeDatabase();
+  const db = getAdapter();
+  const safeLimit = Math.max(1, Math.floor(Number(limit) || 1));
+  const now = Date.now();
+  const [rows] = await db.execute(
+    `SELECT * FROM generation_jobs
+     WHERE status = 'running'
+       AND locked_until < ?
+       AND attempts >= max_attempts
+     ORDER BY locked_until ASC, created_at ASC
+     LIMIT ${safeLimit}`,
+    [now]
+  );
+
+  const expired: GenerationJob[] = [];
+  for (const row of rows as any[]) {
+    const [result] = await db.execute(
+      `UPDATE generation_jobs
+       SET status = 'failed', payload = '{}', locked_by = '', locked_until = 0, finished_at = ?, updated_at = ?, error_message = ?
+       WHERE id = ? AND status = 'running' AND locked_until < ? AND attempts >= max_attempts`,
+      [now, now, 'Generation job expired after reaching max attempts', row.id, now]
+    );
+
+    if (getAffectedRows(result) > 0) {
+      expired.push(mapGenerationJob({
+        ...row,
+        status: 'failed',
+        locked_by: '',
+        locked_until: 0,
+        finished_at: now,
+        updated_at: now,
+        error_message: 'Generation job expired after reaching max attempts',
+      }));
+    }
+  }
+
+  return expired;
 }
 
 export type UserGenerationKindFilter = 'all' | 'video' | 'image';
@@ -1991,6 +2248,26 @@ export async function getGeneration(id: string): Promise<Generation | null> {
 }
 
 // 删除单个生成记录
+export async function getReferencedLocalMediaFilenames(): Promise<Set<string>> {
+  await initializeDatabase();
+  const db = getAdapter();
+
+  const [rows] = await db.execute(
+    "SELECT result_url FROM generations WHERE result_url LIKE 'file:%'"
+  );
+  const filenames = new Set<string>();
+
+  for (const row of rows as Array<{ result_url?: unknown }>) {
+    if (typeof row.result_url !== 'string') continue;
+    const filename = getLocalMediaFilenameFromResultUrl(row.result_url);
+    if (filename) {
+      filenames.add(filename);
+    }
+  }
+
+  return filenames;
+}
+
 export async function deleteGeneration(id: string, userId: string): Promise<boolean> {
   await initializeDatabase();
   const db = getAdapter();

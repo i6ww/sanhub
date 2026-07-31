@@ -42,6 +42,30 @@ function newBucket(): ImageBucketConfig {
   };
 }
 
+type LocalMediaCleanupResult = {
+  mediaDir: string;
+  referencedFiles: number;
+  totalFiles: number;
+  orphanFiles: number;
+  totalBytes: number;
+  orphanBytes: number;
+  deletedFiles: number;
+  deletedBytes: number;
+  failed: Array<{ fileName: string; error: string }>;
+};
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let value = bytes;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
 function normalizeBucketProvider(value: string): ImageBucketConfig['provider'] {
   if (value === 's3-compatible') return 's3-compatible';
   if (value === 'lsky-v2') return 'lsky-v2';
@@ -102,10 +126,14 @@ export default function SiteConfigPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [blocklistTestInput, setBlocklistTestInput] = useState('');
+  const [mediaCleanup, setMediaCleanup] = useState<LocalMediaCleanupResult | null>(null);
+  const [loadingMediaCleanup, setLoadingMediaCleanup] = useState(false);
+  const [cleaningMedia, setCleaningMedia] = useState(false);
   const refreshSiteConfig = useSiteConfigRefresh();
 
   useEffect(() => {
     void loadConfig();
+    void loadMediaCleanup();
   }, []);
 
   async function loadConfig() {
@@ -162,6 +190,60 @@ export default function SiteConfigPage() {
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function loadMediaCleanup() {
+    setLoadingMediaCleanup(true);
+    try {
+      const res = await fetch('/api/admin/media/cleanup', { cache: 'no-store' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to load local media stats');
+      setMediaCleanup(data.data || null);
+    } catch (error) {
+      toast({
+        title: 'Failed to load local media stats',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setLoadingMediaCleanup(false);
+    }
+  }
+
+  async function cleanLocalMedia() {
+    if (cleaningMedia) return;
+
+    const orphanFiles = mediaCleanup?.orphanFiles || 0;
+    const orphanBytes = mediaCleanup?.orphanBytes || 0;
+    if (orphanFiles <= 0) {
+      toast({ title: 'No orphan local media files to clean' });
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${orphanFiles} orphan local media files and reclaim about ${formatBytes(orphanBytes)}? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setCleaningMedia(true);
+    try {
+      const res = await fetch('/api/admin/media/cleanup', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Failed to clean local media');
+      setMediaCleanup(data.data || null);
+      toast({
+        title: 'Local media cleanup complete',
+        description: `Deleted ${data.data?.deletedFiles || 0} files and reclaimed ${formatBytes(data.data?.deletedBytes || 0)}`,
+      });
+    } catch (error) {
+      toast({
+        title: 'Failed to clean local media',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setCleaningMedia(false);
     }
   }
 
@@ -922,6 +1004,71 @@ export default function SiteConfigPage() {
           </div>
         ))}
       </Card>
+
+      <Card icon={Database} title="Local Media Cleanup">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-lg border border-border/70 bg-card/50 p-3">
+            <p className="text-xs text-foreground/45">Local files</p>
+            <p className="mt-1 text-lg font-medium text-foreground">
+              {mediaCleanup ? mediaCleanup.totalFiles : '-'}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-card/50 p-3">
+            <p className="text-xs text-foreground/45">Referenced files</p>
+            <p className="mt-1 text-lg font-medium text-foreground">
+              {mediaCleanup ? mediaCleanup.referencedFiles : '-'}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-card/50 p-3">
+            <p className="text-xs text-foreground/45">Orphan files</p>
+            <p className="mt-1 text-lg font-medium text-amber-300">
+              {mediaCleanup ? mediaCleanup.orphanFiles : '-'}
+            </p>
+          </div>
+          <div className="rounded-lg border border-border/70 bg-card/50 p-3">
+            <p className="text-xs text-foreground/45">Reclaimable space</p>
+            <p className="mt-1 text-lg font-medium text-emerald-300">
+              {mediaCleanup ? formatBytes(mediaCleanup.orphanBytes) : '-'}
+            </p>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border/70 bg-card/50 p-3 text-xs text-foreground/45">
+          <p>Media directory: {mediaCleanup?.mediaDir || '/app/data/media'}</p>
+          {mediaCleanup && mediaCleanup.failed.length > 0 && (
+            <p className="mt-1 text-red-300">
+              {mediaCleanup.failed.length} files failed to read or delete. Check server logs.
+            </p>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-xs text-foreground/40">
+            Only local files that are not referenced by generation history are deleted. Files still referenced by file: records are kept.
+          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => void loadMediaCleanup()}
+              disabled={loadingMediaCleanup || cleaningMedia}
+              className="inline-flex items-center gap-2 rounded-lg border border-border/70 bg-card/60 px-4 py-2 text-sm text-foreground disabled:opacity-50"
+            >
+              {loadingMediaCleanup ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+              Refresh stats
+            </button>
+            <button
+              type="button"
+              onClick={() => void cleanLocalMedia()}
+              disabled={cleaningMedia || loadingMediaCleanup || !mediaCleanup || mediaCleanup.orphanFiles === 0}
+              className="inline-flex items-center gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2 text-sm text-red-300 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {cleaningMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Clean orphan files
+            </button>
+          </div>
+        </div>
+      </Card>
+
 
       <Card icon={Shield} title="提示词处理">
         <div className="grid gap-4 sm:grid-cols-2">

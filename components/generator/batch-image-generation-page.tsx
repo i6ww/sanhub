@@ -114,7 +114,7 @@ function modelSupportsTask(model: SafeImageModel | undefined, task: BatchTask): 
   const hasImages = task.images.length > 0;
   if (hasImages && !model.features.imageToImage) return false;
   if (model.requiresReferenceImage && !hasImages) return false;
-  if (!model.allowEmptyPrompt && !task.prompt.trim() && !hasImages) return false;
+  if (!model.allowEmptyPrompt && !task.prompt.trim()) return false;
   return true;
 }
 
@@ -421,14 +421,21 @@ export function BatchImageGenerationPage() {
             });
             setDailyUsage((current) => ({ ...current, imageCount: current.imageCount + 1 }));
           },
-          onFailed: async (message: string) => {
+          onFailed: async (message: string, payload) => {
+            if (!payload) {
+              updateTask(task.id, {
+                status: task.status === 'processing' ? 'processing' : 'pending',
+                error: message,
+              });
+              return;
+            }
+
             updateTask(task.id, { status: 'failed', error: message, progress: 0 });
           },
           onTimeout: async () => {
             updateTask(task.id, {
-              status: 'failed',
-              error: '\u4efb\u52a1\u67e5\u8be2\u8d85\u65f6\uff0c\u8bf7\u5230\u5386\u53f2\u8bb0\u5f55\u67e5\u770b\u6700\u7ec8\u7ed3\u679c',
-              progress: 0,
+              status: task.status === 'processing' ? 'processing' : 'pending',
+              error: 'Polling paused. The task may still finish; check history for the final result.',
             });
           },
         });

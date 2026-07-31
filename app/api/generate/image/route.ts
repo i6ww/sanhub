@@ -323,10 +323,10 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (!model.allowEmptyPrompt && !prompt && imageList.length === 0) {
+      if (!model.allowEmptyPrompt && !prompt) {
         throwRouteResponse(
           NextResponse.json(
-            { error: 'Please enter a prompt or upload a reference image' },
+            { error: 'This model requires a prompt' },
             { status: 400 }
           )
         );

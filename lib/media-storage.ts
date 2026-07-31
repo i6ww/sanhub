@@ -10,8 +10,8 @@ import {
 import { fetchWithRetry } from './http-retry';
 
 // ========================================
-// 媒体文件存储
-// 支持将 base64 图片保存为文件，减少数据库体积
+// Media file storage
+// Stores base64 media as files to keep database rows small.
 // ========================================
 
 const DATA_DIR = process.env.DATA_DIR || './data';
@@ -20,18 +20,31 @@ const MAX_REMOTE_MEDIA_BYTES = Math.max(
   1,
   Number(process.env.MEDIA_REMOTE_CACHE_MAX_BYTES) || 512 * 1024 * 1024
 );
+const USE_FILE_STORAGE = process.env.MEDIA_FILE_STORAGE !== 'false';
 
 type SaveMediaOptions = {
   publicBaseUrl?: string;
   filename?: string;
 };
 
-// 确保目录存在
+export type LocalMediaCleanupResult = {
+  mediaDir: string;
+  referencedFiles: number;
+  totalFiles: number;
+  orphanFiles: number;
+  totalBytes: number;
+  orphanBytes: number;
+  deletedFiles: number;
+  deletedBytes: number;
+  failed: Array<{ fileName: string; error: string }>;
+};
+
+// Ensure the media directory exists.
 async function ensureMediaDir(): Promise<void> {
   await fsp.mkdir(MEDIA_DIR, { recursive: true });
 }
 
-// 从 data URL 中提取 mime 类型和数据
+// Extract mime type and payload from a base64 data URL.
 function parseDataUrl(dataUrl: string): { mimeType: string; data: string } | null {
   const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
   if (!match) return null;
@@ -41,7 +54,7 @@ function parseDataUrl(dataUrl: string): { mimeType: string; data: string } | nul
   };
 }
 
-// 根据 mime 类型获取文件扩展名
+// Resolve a file extension from a mime type.
 function getExtension(mimeType: string): string {
   const map: Record<string, string> = {
     'image/png': 'png',
@@ -58,6 +71,17 @@ function getExtension(mimeType: string): string {
 
 function isRemoteUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
+}
+
+export function getLocalMediaFilename(identifier: string): string | null {
+  const trimmed = identifier.trim();
+  if (!trimmed.startsWith('file:')) return null;
+
+  const rawFilename = trimmed.slice(5).trim();
+  if (!rawFilename) return null;
+
+  const normalized = rawFilename.replace(/\\/g, '/').split('/').pop() || '';
+  return normalized || null;
 }
 
 function filenameFromUrl(id: string, mediaUrl: string, mimeType: string): string {
@@ -107,27 +131,25 @@ async function downloadRemoteMedia(mediaUrl: string): Promise<{ buffer: Buffer; 
 }
 
 /**
- * 保存 base64 数据为文件（async version，不支持 PicUI）
- * @param id 唯一标识符（通常是 generation ID）
- * @param dataUrl base64 data URL
- * @returns 文件的相对路径（用于存储到数据库）或原始 data URL（如果禁用文件存储）
+ * Save a base64 data URL as a local media file.
+ * @param id Unique identifier, usually a generation ID.
+ * @param dataUrl Base64 data URL.
+ * @returns File identifier suitable for database storage.
  */
 export async function saveMediaToFile(id: string, dataUrl: string): Promise<string> {
-  // 如果不是 data URL，直接返回（可能是外部 URL）
+  // Non-data URLs are already compact external identifiers.
   if (!dataUrl.startsWith('data:')) {
     return dataUrl;
   }
 
-  // 检查是否启用文件存储（默认启用）
-  const useFileStorage = process.env.MEDIA_FILE_STORAGE !== 'false';
-  if (!useFileStorage) {
-    return dataUrl;
+  // Local file storage is enabled by default.
+  if (!USE_FILE_STORAGE) {
+    throw new Error('Local media storage is disabled');
   }
 
   const parsed = parseDataUrl(dataUrl);
   if (!parsed) {
-    console.warn('[MediaStorage] Invalid data URL format, keeping as-is');
-    return dataUrl;
+    throw new Error('Invalid data URL format');
   }
 
   try {
@@ -137,26 +159,26 @@ export async function saveMediaToFile(id: string, dataUrl: string): Promise<stri
     const filename = `${id}.${ext}`;
     const filepath = path.join(MEDIA_DIR, filename);
 
-    // 将 base64 转换为 Buffer 并写入文件
+    // Decode the payload before writing it to the persistent media volume.
     const buffer = Buffer.from(parsed.data, 'base64');
     await fsp.writeFile(filepath, buffer);
 
     console.log(`[MediaStorage] Saved: ${filename} (${(buffer.length / 1024).toFixed(1)} KB)`);
 
-    // 返回文件标识符（前缀 file: 表示本地文件）
+    // The file: prefix is resolved by the media API.
     return `file:${filename}`;
   } catch (error) {
     console.error('[MediaStorage] Failed to save file:', error);
-    // 失败时返回原始 data URL
-    return dataUrl;
+    // Keep failures explicit so callers do not persist the original data URL.
+    throw error;
   }
 }
 
 /**
- * 保存媒体文件（异步版本，优先上传到默认图片桶）
- * @param id 唯一标识符（通常是 generation ID）
- * @param dataUrl base64 data URL
- * @returns 图床 URL、本地文件路径或原始 data URL
+ * Save generated media, preferring the configured image bucket.
+ * @param id Unique identifier, usually a generation ID.
+ * @param dataUrl Remote URL, base64 data URL, or another media identifier.
+ * @returns Remote URL, local file identifier, or compact external identifier.
  */
 export async function saveMediaAsync(
   id: string,
@@ -190,12 +212,12 @@ export async function saveMediaAsync(
     return dataUrl;
   }
 
-  // 如果不是 data URL，直接返回（可能是其他外部标识）
+  // Compact non-data identifiers can be stored directly.
   if (!dataUrl.startsWith('data:')) {
     return dataUrl;
   }
 
-  // 优先尝试上传到默认图片桶
+  // Prefer the configured remote image bucket for base64 payloads.
   if (configuredBucket) {
     try {
       const parsed = parseDataUrl(dataUrl);
@@ -206,21 +228,86 @@ export async function saveMediaAsync(
         return picuiUrl;
       }
     } catch (error) {
-      console.warn('[MediaStorage] Remote upload failed, keeping data URL:', error);
+      console.warn('[MediaStorage] Remote upload failed, falling back to local file storage:', error);
     }
 
-    // 已配置远程桶时不再落本地，避免 S3/PicUI 开启后继续占用本地磁盘。
-    return dataUrl;
+    // Do not persist large base64 payloads when remote upload is unavailable.
+    return await saveMediaToFile(id, dataUrl);
   }
 
-  // 回退到本地文件存储
   return await saveMediaToFile(id, dataUrl);
 }
 
+export async function cleanupLocalMediaFiles(
+  referencedFiles: Set<string>,
+  options: { deleteOrphans?: boolean } = {}
+): Promise<LocalMediaCleanupResult> {
+  await ensureMediaDir();
+
+  const entries = await fsp.readdir(MEDIA_DIR, { withFileTypes: true });
+  const result: LocalMediaCleanupResult = {
+    mediaDir: MEDIA_DIR,
+    referencedFiles: referencedFiles.size,
+    totalFiles: 0,
+    orphanFiles: 0,
+    totalBytes: 0,
+    orphanBytes: 0,
+    deletedFiles: 0,
+    deletedBytes: 0,
+    failed: [],
+  };
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+
+    const fileName = entry.name;
+    const filePath = path.join(MEDIA_DIR, fileName);
+    let size = 0;
+
+    try {
+      const stat = await fsp.stat(filePath);
+      size = stat.size;
+    } catch (error) {
+      result.failed.push({
+        fileName,
+        error: error instanceof Error ? error.message : 'Failed to stat file',
+      });
+      continue;
+    }
+
+    result.totalFiles += 1;
+    result.totalBytes += size;
+
+    if (referencedFiles.has(fileName)) {
+      continue;
+    }
+
+    result.orphanFiles += 1;
+    result.orphanBytes += size;
+
+    if (!options.deleteOrphans) {
+      continue;
+    }
+
+    try {
+      await fsp.unlink(filePath);
+      result.deletedFiles += 1;
+      result.deletedBytes += size;
+    } catch (error) {
+      result.failed.push({
+        fileName,
+        error: error instanceof Error ? error.message : 'Failed to delete file',
+      });
+    }
+  }
+
+  return result;
+}
+
 /**
- * 读取媒体文件
- * @param identifier 文件标识符（file:xxx.png 格式）或完整路径
- * @returns { buffer, mimeType } 或 null
+ * Read a local media file.
+ * @param identifier File identifier, such as file:xxx.png, or a full path.
+ * @returns Media bytes and mime type, or null when unavailable.
  */
 export async function readMediaFile(
   identifier: string
@@ -231,7 +318,7 @@ export async function readMediaFile(
     if (identifier.startsWith('file:')) {
       filename = identifier.slice(5);
     } else {
-      // 可能是完整路径或其他格式
+      // Accept legacy full paths or other file-like identifiers.
       filename = path.basename(identifier);
     }
 
@@ -263,8 +350,8 @@ export async function readMediaFile(
 }
 
 /**
- * 删除媒体文件
- * @param identifier 文件标识符
+ * Delete a local media file.
+ * @param identifier File identifier.
  */
 export function deleteMediaFile(identifier: string): boolean {
   try {
@@ -289,7 +376,7 @@ export function deleteMediaFile(identifier: string): boolean {
 }
 
 /**
- * 检查标识符是否为本地文件
+ * Check whether an identifier points to a local file.
  */
 export function isLocalFile(identifier: string): boolean {
   return identifier.startsWith('file:');

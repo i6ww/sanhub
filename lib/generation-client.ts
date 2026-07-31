@@ -52,6 +52,10 @@ export function isTerminalGenerationStatus(status?: string): boolean {
   );
 }
 
+function isCompletedGenerationStatus(status?: string): boolean {
+  return status === 'completed' || status === 'succeeded';
+}
+
 export function isFailedGenerationStatus(status?: string): status is 'failed' | 'cancelled' {
   return status === 'failed' || status === 'cancelled';
 }
@@ -59,9 +63,8 @@ export function isFailedGenerationStatus(status?: string): status is 'failed' | 
 function isSuccessfulGenerationPayload(payload?: GenerationStatusPayload): payload is GenerationStatusPayload {
   return Boolean(
     payload &&
-      (payload.status === 'completed' ||
-        payload.status === 'succeeded' ||
-        payload.url)
+      isCompletedGenerationStatus(payload.status) &&
+      payload.url
   );
 }
 
@@ -273,6 +276,43 @@ export async function fetchGenerationStatus(
   return payload.data as GenerationStatusPayload;
 }
 
+async function ensureGenerationMediaReady(
+  payload: GenerationStatusPayload,
+  signal?: AbortSignal
+): Promise<void> {
+  if (!isCompletedGenerationStatus(payload.status)) {
+    return;
+  }
+
+  const mediaUrl = `/api/media/${payload.id}`;
+  let response = await fetch(mediaUrl, {
+    method: 'HEAD',
+    cache: 'no-store',
+    signal,
+  });
+
+  if (response.status === 405) {
+    response = await fetch(mediaUrl, {
+      method: 'GET',
+      cache: 'no-store',
+      signal,
+    });
+    await response.body?.cancel();
+  }
+
+  if (response.status === 204 || response.status === 404) {
+    throw new Error(`Media not ready: ${response.status}`);
+  }
+
+  if (response.status >= 500 || response.status === 408 || response.status === 409 || response.status === 425 || response.status === 429) {
+    throw new Error(`Media unavailable: ${response.status}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Media unavailable: ${response.status}`);
+  }
+}
+
 export function buildCompletedGeneration(
   payload: GenerationStatusPayload,
   prompt: string
@@ -293,6 +333,11 @@ export function buildCompletedGeneration(
 
 function waitFor(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
+
     const complete = () => {
       if (signal) {
         signal.removeEventListener('abort', abortHandler);
@@ -335,6 +380,7 @@ export async function pollGenerationTask(
     try {
       const latest = await fetchGenerationStatus(taskId, signal);
       if (isSuccessfulGenerationPayload(latest)) {
+        await ensureGenerationMediaReady(latest, signal);
         await onCompleted(buildCompletedGeneration(latest, taskPrompt), latest);
         return true;
       }
@@ -364,6 +410,7 @@ export async function pollGenerationTask(
       }
 
       if (isSuccessfulGenerationPayload(payload)) {
+        await ensureGenerationMediaReady(payload, signal);
         await onCompleted(buildCompletedGeneration(payload, taskPrompt), payload);
         return;
       }

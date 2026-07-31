@@ -6,8 +6,11 @@ import {
   failGenerationJob,
   getSystemConfig,
   releaseGenerationJob,
+  renewGenerationJobLock,
   refundGenerationBalance,
+  sweepExpiredGenerationJobs,
   updateGeneration,
+  updateGenerationIfLockedByJob,
 } from './db';
 import { generateImage, type ImageGenerateRequest } from './image-generator';
 import { saveMediaAsync } from './media-storage';
@@ -21,6 +24,13 @@ export interface ImageGenerationJobPayload {
 }
 
 const POLL_INTERVAL_MS = 1_000;
+const LOCK_RENEWAL_MAX_INTERVAL_MS = 60_000;
+const LOCK_RENEWAL_MIN_INTERVAL_MS = 15_000;
+
+type GenerationJobExecutionContext = {
+  jobId: string;
+  workerId: string;
+};
 
 type QueueRuntime = {
   started: boolean;
@@ -28,6 +38,13 @@ type QueueRuntime = {
   active: number;
   activeByChannel: Map<string, number>;
 };
+
+class GenerationJobLockLostError extends Error {
+  constructor(jobId: string) {
+    super(`Generation job lock lost: ${jobId}`);
+    this.name = 'GenerationJobLockLostError';
+  }
+}
 
 const globalForQueue = globalThis as typeof globalThis & {
   __sanhubGenerationQueue?: QueueRuntime;
@@ -77,6 +94,39 @@ function decrementActive(state: QueueRuntime, channelId: string) {
     state.activeByChannel.set(channelId, nextChannelCount);
   } else {
     state.activeByChannel.delete(channelId);
+  }
+}
+
+function isGenerationJobLockLostError(error: unknown): boolean {
+  return error instanceof GenerationJobLockLostError;
+}
+
+function lockRenewalInterval(lockTimeoutMs: number): number {
+  const candidate = Math.floor(Math.max(30_000, lockTimeoutMs) / 3);
+  return Math.max(
+    LOCK_RENEWAL_MIN_INTERVAL_MS,
+    Math.min(LOCK_RENEWAL_MAX_INTERVAL_MS, candidate)
+  );
+}
+
+async function updateGenerationForExecution(
+  generationId: string,
+  updates: Partial<Pick<Generation, 'status' | 'resultUrl' | 'errorMessage' | 'params'>>,
+  context?: GenerationJobExecutionContext
+): Promise<void> {
+  if (!context) {
+    await updateGeneration(generationId, updates);
+    return;
+  }
+
+  const updated = await updateGenerationIfLockedByJob(
+    generationId,
+    context.jobId,
+    context.workerId,
+    updates
+  );
+  if (!updated) {
+    throw new GenerationJobLockLostError(context.jobId);
   }
 }
 
@@ -137,33 +187,49 @@ function isRetryableGenerationError(error: unknown): boolean {
 
 export async function executeImageGenerationJobPayload(
   generationId: string,
-  payload: ImageGenerationJobPayload
+  payload: ImageGenerationJobPayload,
+  context?: GenerationJobExecutionContext
 ): Promise<void> {
-  await updateGeneration(generationId, {
+  await updateGenerationForExecution(generationId, {
     status: 'processing',
     params: {
       ...payload.generationParams,
       progress: 10,
     },
-  });
+  }, context);
 
   const result = await generateImage(payload.request);
 
-  await updateGeneration(generationId, {
+  await updateGenerationForExecution(generationId, {
     status: 'processing',
     params: {
       ...payload.generationParams,
       progress: 80,
     },
-  });
+  }, context);
 
   const savedUrl = await saveMediaAsync(generationId, result.url, {
     publicBaseUrl: payload.publicBaseUrl,
   });
 
+  if (context) {
+    const completed = await completeGenerationJob(context.jobId, context.workerId, generationId, {
+      resultUrl: savedUrl,
+      params: {
+        ...payload.generationParams,
+        progress: 100,
+      },
+    });
+    if (!completed) {
+      throw new GenerationJobLockLostError(context.jobId);
+    }
+    return;
+  }
+
   await updateGeneration(generationId, {
     status: 'completed',
     resultUrl: savedUrl,
+    errorMessage: '',
     params: {
       ...payload.generationParams,
       progress: 100,
@@ -171,42 +237,114 @@ export async function executeImageGenerationJobPayload(
   });
 }
 
-async function executeClaimedJob(state: QueueRuntime, job: GenerationJob) {
+async function finalizeExpiredJob(job: GenerationJob) {
+  const message = job.errorMessage || 'Generation job expired after reaching max attempts';
+  console.warn(`[GenerationQueue] Expired job ${job.id} for generation ${job.generationId}: ${message}`);
+
+  await updateGeneration(job.generationId, {
+    status: 'failed',
+    errorMessage: message,
+  }).catch((updateError) => {
+    console.error(`[GenerationQueue] Failed to mark expired generation ${job.generationId} failed:`, updateError);
+  });
+
+  const prechargedCost = Math.max(0, Number(job.payload.prechargedCost) || 0);
+  await refundGenerationBalance(
+    job.generationId,
+    job.userId,
+    prechargedCost
+  ).catch((refundError) => {
+    console.error(`[GenerationQueue] Refund failed for expired generation ${job.generationId}:`, refundError);
+  });
+}
+
+async function executeClaimedJob(state: QueueRuntime, job: GenerationJob, lockTimeoutMs: number) {
   incrementActive(state, job.channelId);
+  let lockOwned = true;
+  const heartbeat = setInterval(() => {
+    renewGenerationJobLock(job.id, state.workerId, lockTimeoutMs)
+      .then((renewed) => {
+        if (!renewed) {
+          lockOwned = false;
+          console.warn(`[GenerationQueue] Lost lock for job ${job.id}`);
+        }
+      })
+      .catch((error) => {
+        lockOwned = false;
+        console.error(`[GenerationQueue] Failed to renew lock for job ${job.id}:`, error);
+      });
+  }, lockRenewalInterval(lockTimeoutMs));
+
+  if (typeof heartbeat === 'object' && 'unref' in heartbeat && typeof heartbeat.unref === 'function') {
+    heartbeat.unref();
+  }
 
   try {
     const payload = asImageGenerationJobPayload(job.payload);
     console.log(`[GenerationQueue] Running job ${job.id} for generation ${job.generationId}`);
-    await executeImageGenerationJobPayload(job.generationId, payload);
-    await completeGenerationJob(job.id);
+    await executeImageGenerationJobPayload(job.generationId, payload, {
+      jobId: job.id,
+      workerId: state.workerId,
+    });
     console.log(`[GenerationQueue] Completed job ${job.id}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Generation failed';
-    const shouldRetry = job.attempts < job.maxAttempts && isRetryableGenerationError(error);
-
-    console.error(`[GenerationQueue] Job ${job.id} failed:`, error);
-    await failGenerationJob(job.id, message, shouldRetry);
-
-    if (shouldRetry) {
-      await updateGeneration(job.generationId, {
-        status: 'pending',
-        errorMessage: message,
-        params: {
-          ...((job.payload.generationParams || {}) as Generation['params']),
-          progress: 0,
-        },
-      }).catch((updateError) => {
-        console.error(`[GenerationQueue] Failed to reset generation ${job.generationId}:`, updateError);
-      });
+    if (!lockOwned || isGenerationJobLockLostError(error)) {
+      console.warn(`[GenerationQueue] Skipping finalization for job ${job.id} because the lock is no longer owned`);
       return;
     }
 
-    await updateGeneration(job.generationId, {
-      status: 'failed',
-      errorMessage: message,
-    }).catch((updateError) => {
-      console.error(`[GenerationQueue] Failed to mark generation ${job.generationId} failed:`, updateError);
-    });
+    const shouldRetry = job.attempts < job.maxAttempts && isRetryableGenerationError(error);
+
+    console.error(`[GenerationQueue] Job ${job.id} failed:`, error);
+
+    if (shouldRetry) {
+      try {
+        const released = await failGenerationJob(
+          job.id,
+          state.workerId,
+          job.generationId,
+          message,
+          true,
+          {
+            params: {
+              ...((job.payload.generationParams || {}) as Generation['params']),
+              progress: 0,
+            },
+          }
+        );
+        if (!released) {
+          throw new GenerationJobLockLostError(job.id);
+        }
+      } catch (finalizeError) {
+        if (isGenerationJobLockLostError(finalizeError)) {
+          console.warn(`[GenerationQueue] Retry finalization skipped for job ${job.id} because the lock is no longer owned`);
+          return;
+        }
+        console.error(`[GenerationQueue] Failed to retry job ${job.id}:`, finalizeError);
+      }
+      return;
+    }
+
+    try {
+      const failed = await failGenerationJob(
+        job.id,
+        state.workerId,
+        job.generationId,
+        message,
+        false
+      );
+      if (!failed) {
+        throw new GenerationJobLockLostError(job.id);
+      }
+    } catch (finalizeError) {
+      if (isGenerationJobLockLostError(finalizeError)) {
+        console.warn(`[GenerationQueue] Failure finalization skipped for job ${job.id} because the lock is no longer owned`);
+        return;
+      }
+      console.error(`[GenerationQueue] Failed to mark job ${job.id} failed:`, finalizeError);
+      return;
+    }
 
     const prechargedCost = Math.max(0, Number(job.payload.prechargedCost) || 0);
     await refundGenerationBalance(
@@ -217,6 +355,7 @@ async function executeClaimedJob(state: QueueRuntime, job: GenerationJob) {
       console.error(`[GenerationQueue] Refund failed for generation ${job.generationId}:`, refundError);
     });
   } finally {
+    clearInterval(heartbeat);
     decrementActive(state, job.channelId);
   }
 }
@@ -230,6 +369,11 @@ async function tick(state: QueueRuntime) {
   if (globalAvailable <= 0) return;
 
   const lockTimeoutMs = queueConfig.lockTimeoutSeconds * 1_000;
+  const expiredJobs = await sweepExpiredGenerationJobs(Math.max(1, globalAvailable));
+  for (const job of expiredJobs) {
+    void finalizeExpiredJob(job);
+  }
+
   const candidates = await claimGenerationJobs(
     state.workerId,
     globalAvailable,
@@ -238,16 +382,16 @@ async function tick(state: QueueRuntime) {
 
   for (const job of candidates) {
     if (state.active >= queueConfig.imageConcurrency) {
-      await releaseGenerationJob(job.id, 'Concurrency slot unavailable');
+      await releaseGenerationJob(job.id, state.workerId, 'Concurrency slot unavailable');
       continue;
     }
 
     if (getActiveChannelCount(state, job.channelId) >= queueConfig.channelConcurrency) {
-      await releaseGenerationJob(job.id, 'Channel concurrency slot unavailable');
+      await releaseGenerationJob(job.id, state.workerId, 'Channel concurrency slot unavailable');
       continue;
     }
 
-    void executeClaimedJob(state, job);
+    void executeClaimedJob(state, job, lockTimeoutMs);
   }
 }
 
