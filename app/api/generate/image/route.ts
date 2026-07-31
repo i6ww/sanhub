@@ -440,6 +440,7 @@ export async function POST(request: NextRequest) {
             resultUrl: '',
             cost: model.costPerGeneration,
             status: 'pending',
+            clientRequestId: clientRequestId || undefined,
             balancePrecharged: true,
             balanceRefunded: false,
           })
@@ -448,6 +449,12 @@ export async function POST(request: NextRequest) {
         await updateUserBalance(user.id, model.costPerGeneration, 'strict').catch((refundError) => {
           console.error('[API] Precharge rollback failed:', refundError);
         });
+        const existingGeneration = clientRequestId
+          ? await getGenerationByClientRequestId(user.id, clientRequestId).catch(() => null)
+          : null;
+        if (existingGeneration) {
+          return existingGeneration;
+        }
         throw error;
       }
 

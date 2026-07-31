@@ -35,6 +35,96 @@ function getLocalMediaFilenameFromResultUrl(resultUrl: string): string | null {
   return normalized || null;
 }
 
+const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function normalizeClientRequestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed || !CLIENT_REQUEST_ID_PATTERN.test(trimmed)) return null;
+
+  return trimmed;
+}
+
+function extractClientRequestIdFromParams(params: unknown): string | null {
+  const parsed =
+    typeof params === 'string'
+      ? parseJsonValue<Record<string, unknown>>(params, {})
+      : params && typeof params === 'object'
+        ? (params as Record<string, unknown>)
+        : {};
+
+  return normalizeClientRequestId(parsed.clientRequestId);
+}
+
+async function backfillGenerationClientRequestIds(db: DatabaseAdapter): Promise<void> {
+  try {
+    const [rows] = await db.execute(
+      `SELECT id, params
+       FROM generations
+       WHERE (client_request_id IS NULL OR client_request_id = '')
+         AND params LIKE ?`,
+      ['%clientRequestId%']
+    );
+
+    let updated = 0;
+    for (const row of rows as any[]) {
+      const clientRequestId = extractClientRequestIdFromParams(row.params);
+      if (!clientRequestId) continue;
+
+      const [result] = await db.execute(
+        'UPDATE generations SET client_request_id = ? WHERE id = ? AND (client_request_id IS NULL OR client_request_id = ?)',
+        [clientRequestId, row.id, '']
+      );
+      if (getAffectedRows(result) > 0) updated += 1;
+    }
+
+    if (updated > 0) {
+      console.log(`[DB] Backfilled generation client_request_id values: ${updated}`);
+    }
+  } catch (error) {
+    console.warn('[DB] Failed to backfill generation client_request_id values:', error);
+  }
+}
+
+async function clearDuplicateGenerationClientRequestIds(db: DatabaseAdapter): Promise<void> {
+  try {
+    const [duplicates] = await db.execute(
+      `SELECT user_id, client_request_id, COUNT(*) AS duplicate_count
+       FROM generations
+       WHERE client_request_id IS NOT NULL AND client_request_id <> ''
+       GROUP BY user_id, client_request_id
+       HAVING COUNT(*) > 1`
+    );
+
+    let cleared = 0;
+    for (const duplicate of duplicates as any[]) {
+      const [rows] = await db.execute(
+        `SELECT id
+         FROM generations
+         WHERE user_id = ? AND client_request_id = ?
+         ORDER BY created_at DESC, id DESC`,
+        [duplicate.user_id, duplicate.client_request_id]
+      );
+      const staleIds = (rows as any[]).slice(1).map((row) => row.id).filter(Boolean);
+      if (staleIds.length === 0) continue;
+
+      const placeholders = staleIds.map(() => '?').join(', ');
+      const [result] = await db.execute(
+        `UPDATE generations SET client_request_id = NULL WHERE id IN (${placeholders})`,
+        staleIds
+      );
+      cleared += getAffectedRows(result);
+    }
+
+    if (cleared > 0) {
+      console.log(`[DB] Cleared duplicate generation client_request_id values: ${cleared}`);
+    }
+  } catch (error) {
+    console.warn('[DB] Failed to clear duplicate generation client_request_id values:', error);
+  }
+}
+
 // ========================================
 // 数据库初始化
 // ========================================
@@ -61,6 +151,7 @@ CREATE TABLE IF NOT EXISTS generations (
   type ENUM('sora-video', 'sora-image', 'gemini-image', 'zimage-image', 'gitee-image') NOT NULL,
   prompt TEXT,
   params TEXT,
+  client_request_id VARCHAR(128),
   result_url LONGTEXT,
   cost INT DEFAULT 0,
   balance_precharged TINYINT(1) DEFAULT 0,
@@ -377,6 +468,16 @@ async function initializeDatabaseInternal(): Promise<void> {
 
   try {
     if (dbType === 'mysql') {
+      await db.execute('ALTER TABLE generations ADD COLUMN client_request_id VARCHAR(128)');
+    } else {
+      await db.execute('ALTER TABLE generations ADD COLUMN client_request_id TEXT');
+    }
+  } catch {
+    // Column already exists.
+  }
+
+  try {
+    if (dbType === 'mysql') {
       await db.execute('ALTER TABLE generations ADD COLUMN updated_at BIGINT NOT NULL DEFAULT 0');
     } else {
       // SQLite: 不支持 NOT NULL 和 DEFAULT 同时使用在 ALTER TABLE 中
@@ -396,6 +497,21 @@ async function initializeDatabaseInternal(): Promise<void> {
   }
 
   // 添加 Z-Image 配置字段（如果不存在）
+  await backfillGenerationClientRequestIds(db);
+  try {
+    await db.execute("UPDATE generations SET client_request_id = NULL WHERE client_request_id = ''");
+  } catch {
+    // Ignore cleanup failures; index creation will surface real conflicts.
+  }
+  await clearDuplicateGenerationClientRequestIds(db);
+  try {
+    await db.execute(
+      'CREATE UNIQUE INDEX idx_user_client_request_id ON generations (user_id, client_request_id)'
+    );
+  } catch {
+    // Index already exists.
+  }
+
   try {
     await db.execute("ALTER TABLE system_config ADD COLUMN zimage_api_key VARCHAR(500) DEFAULT ''");
   } catch {
@@ -1380,19 +1496,24 @@ export async function saveGeneration(
     id: generateId(),
     createdAt: now,
     updatedAt: now,
+    clientRequestId:
+      normalizeClientRequestId(generation.clientRequestId) ||
+      extractClientRequestIdFromParams(generation.params) ||
+      undefined,
     balancePrecharged: generation.balancePrecharged ?? false,
     balanceRefunded: generation.balanceRefunded ?? false,
   };
 
   await db.execute(
-    `INSERT INTO generations (id, user_id, type, prompt, params, result_url, cost, balance_precharged, balance_refunded, status, error_message, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO generations (id, user_id, type, prompt, params, client_request_id, result_url, cost, balance_precharged, balance_refunded, status, error_message, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       gen.id,
       gen.userId,
       gen.type,
       gen.prompt,
       JSON.stringify(gen.params),
+      gen.clientRequestId || null,
       gen.resultUrl,
       gen.cost,
       gen.balancePrecharged ? 1 : 0,
@@ -1414,6 +1535,7 @@ function mapGenerationRow(row: any): Generation {
     type: row.type,
     prompt: row.prompt,
     params: parseJsonValue<Generation['params']>(row.params, {}),
+    clientRequestId: row.client_request_id || undefined,
     resultUrl: row.result_url,
     cost: Number(row.cost) || 0,
     status: row.status || 'completed',
@@ -1432,23 +1554,17 @@ export async function getGenerationByClientRequestId(
   await initializeDatabase();
   const db = getAdapter();
 
+  const normalizedClientRequestId = normalizeClientRequestId(clientRequestId);
+  if (!normalizedClientRequestId) return null;
+
   const [rows] = await db.execute(
     `SELECT * FROM generations
-     WHERE user_id = ? AND params LIKE ?
-     ORDER BY created_at DESC LIMIT 10`,
-    [userId, `%"clientRequestId":"${clientRequestId}"%`]
+     WHERE user_id = ? AND client_request_id = ?
+     ORDER BY created_at DESC LIMIT 1`,
+    [userId, normalizedClientRequestId]
   );
 
-  for (const row of rows as any[]) {
-    const params = typeof row.params === 'string' ? JSON.parse(row.params) : row.params;
-    if (params?.clientRequestId !== clientRequestId) {
-      continue;
-    }
-
-    return mapGenerationRow({ ...row, params: JSON.stringify(params) });
-  }
-
-  return null;
+  return (rows as any[])[0] ? mapGenerationRow((rows as any[])[0]) : null;
 }
 
 export async function updateGeneration(
@@ -1472,6 +1588,11 @@ export async function updateGeneration(
   if (updates.params !== undefined) {
     fields.push('params = ?');
     values.push(JSON.stringify(updates.params));
+    const nextClientRequestId = extractClientRequestIdFromParams(updates.params);
+    if (nextClientRequestId) {
+      fields.push('client_request_id = ?');
+      values.push(nextClientRequestId);
+    }
   }
   if (updates.balancePrecharged !== undefined) {
     fields.push('balance_precharged = ?');
@@ -1518,6 +1639,11 @@ export async function updateGenerationIfLockedByJob(
   if (updates.params !== undefined) {
     fields.push('params = ?');
     values.push(JSON.stringify(updates.params));
+    const nextClientRequestId = extractClientRequestIdFromParams(updates.params);
+    if (nextClientRequestId) {
+      fields.push('client_request_id = ?');
+      values.push(nextClientRequestId);
+    }
   }
   if (updates.balancePrecharged !== undefined) {
     fields.push('balance_precharged = ?');
@@ -1754,6 +1880,11 @@ export async function completeGenerationJob(
   if (updates.params !== undefined) {
     fields.push('g.params = ?');
     values.push(JSON.stringify(updates.params));
+    const nextClientRequestId = extractClientRequestIdFromParams(updates.params);
+    if (nextClientRequestId) {
+      fields.push('g.client_request_id = ?');
+      values.push(nextClientRequestId);
+    }
   }
 
   fields.push(

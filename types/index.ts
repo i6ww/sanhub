@@ -80,6 +80,7 @@ export interface Generation {
   resultUrl: string; // base64 data URL 或外链
   cost: number; // 消耗积分
   status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  clientRequestId?: string;
   balancePrecharged?: boolean;
   balanceRefunded?: boolean;
   errorMessage?: string;
