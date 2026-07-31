@@ -457,6 +457,117 @@ root filesystem free: 48G
 - `generations` 和 `generation_jobs` 行数未变化
 - 506 条历史 base64 图片对应的预览不可用，这是本次清理的预期结果
 
+## 问题十二：MySQL binlog 清理与 Docker 占用回收
+
+### 用户目标
+
+继续确认 Docker 环境下的空间占用，排查 MySQL volume 仍然偏大的原因，并在不丢生产数据的前提下释放可回收空间。
+
+### 清理前 Docker 占用
+
+清理前 Docker 总览：
+
+```text
+Images: 1.851 GB
+Containers: 12.99 MB
+Local Volumes: 15.85 GB
+Build Cache: 395.9 MB
+```
+
+MySQL volume 结构：
+
+```text
+sanhub_sanhub_mysql: 15G
+sanhub_sanhub_data: 671M
+```
+
+MySQL 业务库实际目录：
+
+```text
+sanhub database dir: 231M
+generations.ibd: 84M
+generation_jobs.ibd: 136M
+```
+
+因此 MySQL volume 的大头已经不是业务表。
+
+### 根因
+
+MySQL volume 中主要空间来自 binlog：
+
+```text
+binlog.000222: 2683.06 MB
+binlog.000214: 1047.53 MB
+binlog.000221: 1028.34 MB
+binlog.000218: 1028.11 MB
+binlog.000220: 1027.76 MB
+binlog.000219: 1027.42 MB
+binlog.000212: 1027.33 MB
+binlog.000213: 1025.93 MB
+binlog.000215: 1025.62 MB
+binlog.000211: 1025.46 MB
+binlog.000216: 1024.19 MB
+binlog.000217: 1024.00 MB
+```
+
+当前 binlog 状态：
+
+```text
+log_bin: ON
+binlog_expire_logs_seconds: 86400
+current binlog: binlog.000223
+replicas: none
+```
+
+判断：
+
+- 当前没有 MySQL replica
+- 之前已经有当前状态数据库备份
+- 可以使用 MySQL 官方 purge 命令清理旧 binlog
+- 禁止直接删除 `binlog.*` 文件
+
+### 执行操作
+
+清理 `binlog.000223` 之前的旧 binlog，保留当前正在写入的 binlog：
+
+```sql
+PURGE BINARY LOGS TO 'binlog.000223';
+```
+
+### 清理后验证
+
+清理后 binlog：
+
+```text
+binlog.000223: 19514 bytes
+```
+
+清理后空间：
+
+```text
+sanhub_sanhub_mysql: 452M
+Docker Local Volumes: 1.177G
+root filesystem used: 14G
+root filesystem available: 62G
+root filesystem usage: 19%
+```
+
+对比：
+
+```text
+MySQL volume: 15G -> 452M
+Docker Local Volumes: 15.85G -> 1.177G
+root filesystem available: 48G -> 62G
+```
+
+结果：
+
+- MySQL binlog 已安全清理
+- Docker volume 占用恢复正常
+- 生产业务数据未删除
+- MySQL 当前仍保留 binlog，后续按 `binlog_expire_logs_seconds = 86400` 自动过期
+- 后续大批量更新仍可能短时间产生大 binlog，可用 `SHOW BINARY LOGS` 和 `PURGE BINARY LOGS TO ...` 处理
+
 ## 部署安全策略
 
 本轮生产部署遵循：
