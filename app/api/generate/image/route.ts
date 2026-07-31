@@ -20,7 +20,6 @@ import {
   type ImageGenerationJobPayload,
 } from '@/lib/generation-queue';
 import { checkRateLimit } from '@/lib/rate-limit';
-import { fetchReferenceImage } from '@/lib/reference-image';
 import { assertPromptsAllowed, isPromptBlockedError } from '@/lib/prompt-blocklist';
 import { resolveImageSize } from '@/lib/v1-images';
 import {
@@ -32,7 +31,6 @@ import type { ChannelType, Generation, GenerationType } from '@/types';
 export const maxDuration = 600;
 export const dynamic = 'force-dynamic';
 
-const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_REFERENCE_IMAGES = 6;
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/;
 const imageTaskCreationPromises = new Map<string, Promise<Generation>>();
@@ -53,6 +51,55 @@ class RouteResponseError extends Error {
   constructor(public response: NextResponse) {
     super('Route response');
   }
+}
+
+type ImageSubmitMetrics = Record<string, number>;
+
+function elapsedMs(startedAt: number): number {
+  return Date.now() - startedAt;
+}
+
+async function measureSubmitStage<T>(
+  metrics: ImageSubmitMetrics,
+  stage: string,
+  operation: () => Promise<T>
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await operation();
+  } finally {
+    metrics[stage] = (metrics[stage] || 0) + elapsedMs(startedAt);
+  }
+}
+
+function jsonSizeBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), 'utf8');
+  } catch {
+    return 0;
+  }
+}
+
+function logImageSubmitMetrics(input: {
+  generationId?: string;
+  modelId?: string;
+  queued: boolean;
+  inlineImageCount: number;
+  deferredReferenceImageCount: number;
+  payloadBytes: number;
+  startedAt: number;
+  metrics: ImageSubmitMetrics;
+}) {
+  console.log('[ImageSubmitMetrics]', JSON.stringify({
+    generationId: input.generationId,
+    modelId: input.modelId,
+    queued: input.queued,
+    inlineImageCount: input.inlineImageCount,
+    deferredReferenceImageCount: input.deferredReferenceImageCount,
+    payloadBytes: input.payloadBytes,
+    totalDurationMs: elapsedMs(input.startedAt),
+    ...input.metrics,
+  }));
 }
 
 function buildTaskResponse(generation: Generation, message: string) {
@@ -120,9 +167,12 @@ async function runDirectGenerationTask(
 
 export async function POST(request: NextRequest) {
   try {
+    const submitStartedAt = Date.now();
+    const submitMetrics: ImageSubmitMetrics = {};
+
     startGenerationQueueWorker();
 
-    const systemConfig = await getSystemConfig();
+    const systemConfig = await measureSubmitStage(submitMetrics, 'getSystemConfigMs', getSystemConfig);
     const imageMaxRequests = Math.max(1, Number(systemConfig.rateLimit?.imageMaxRequests) || 30);
     const imageWindowSeconds = Math.max(1, Number(systemConfig.rateLimit?.imageWindowSeconds) || 60);
     const rateLimit = checkRateLimit(
@@ -138,12 +188,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const session = await getServerSession(authOptions);
+    const session = await measureSubmitStage(submitMetrics, 'getSessionMs', () =>
+      getServerSession(authOptions)
+    );
     if (!session?.user) {
       return NextResponse.json({ error: 'Please sign in first' }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = await measureSubmitStage(submitMetrics, 'parseRequestBodyMs', () =>
+      request.json()
+    );
     const payload = body && typeof body === 'object' ? (body as Record<string, unknown>) : {};
     const googleImageConfig = getGoogleImageConfig(payload);
     const modelId = firstString(payload.modelId, payload.model_id);
@@ -184,13 +238,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '请求标识无效，请刷新页面后重试' }, { status: 400 });
     }
 
-    await assertPromptsAllowed([prompt]);
+    await measureSubmitStage(submitMetrics, 'assertPromptsAllowedMs', () =>
+      assertPromptsAllowed([prompt])
+    );
 
     if (!modelId) {
       return NextResponse.json({ error: '请先选择模型' }, { status: 400 });
     }
 
-    const modelConfig = await getImageModelWithChannel(modelId);
+    const modelConfig = await measureSubmitStage(submitMetrics, 'getImageModelMs', () =>
+      getImageModelWithChannel(modelId)
+    );
     if (!modelConfig) {
       return NextResponse.json({ error: '模型不存在或已被删除，请重新选择模型' }, { status: 404 });
     }
@@ -207,7 +265,9 @@ export async function POST(request: NextRequest) {
       effectiveImageSize
     );
 
-    const user = await getUserById(session.user.id);
+    const user = await measureSubmitStage(submitMetrics, 'getUserMs', () =>
+      getUserById(session.user.id)
+    );
     if (!user) {
       return NextResponse.json({ error: 'User not found' }, { status: 401 });
     }
@@ -228,7 +288,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (clientRequestId) {
-      const existingGeneration = await getGenerationByClientRequestId(user.id, clientRequestId);
+      const existingGeneration = await measureSubmitStage(
+        submitMetrics,
+        'getGenerationByClientRequestIdMs',
+        () => getGenerationByClientRequestId(user.id, clientRequestId)
+      );
       if (existingGeneration) {
         return buildTaskResponse(existingGeneration, 'Task already exists; reused current task');
       }
@@ -248,6 +312,10 @@ export async function POST(request: NextRequest) {
     }
 
     const createTask = async (): Promise<Generation> => {
+      let payloadBytes = 0;
+      let deferredReferenceImageCount = 0;
+      let inlineImageCount = 0;
+
       if (user.balance < model.costPerGeneration) {
         throwRouteResponse(
           NextResponse.json(
@@ -259,56 +327,42 @@ export async function POST(request: NextRequest) {
 
       const origin = new URL(request.url).origin;
       const imageList: Array<{ mimeType: string; data: string }> = [];
+      const deferredReferenceImages: string[] = [];
 
-      if (Array.isArray(images)) {
-        imageList.push(...images.filter(isInlineImageInput));
-      }
-
-      if (referenceImageUrl) {
-        const referenceImage = await fetchReferenceImage(referenceImageUrl, {
-          origin,
-          userId: session.user.id,
-          userRole: session.user.role,
-          maxBytes: MAX_REFERENCE_IMAGE_BYTES,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          },
-        });
-        imageList.push({
-          mimeType: referenceImage.mimeType,
-          data: referenceImage.dataUrl,
-        });
-      }
-
-      if (Array.isArray(referenceImages)) {
-        for (const img of referenceImages) {
-          if (typeof img !== 'string') continue;
-
-          if (img.startsWith('data:')) {
-            const match = img.match(/^data:([^;]+);base64,(.+)$/);
-            if (match) {
-              imageList.push({ mimeType: match[1], data: img });
-            }
-            continue;
-          }
-
-          const referenceImage = await fetchReferenceImage(img, {
-            origin,
-            userId: session.user.id,
-            userRole: session.user.role,
-            maxBytes: MAX_REFERENCE_IMAGE_BYTES,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            },
-          });
-          imageList.push({
-            mimeType: referenceImage.mimeType,
-            data: referenceImage.dataUrl,
-          });
+      await measureSubmitStage(submitMetrics, 'prepareReferenceInputsMs', async () => {
+        if (Array.isArray(images)) {
+          imageList.push(...images.filter(isInlineImageInput));
         }
-      }
 
-      if (imageList.length > MAX_REFERENCE_IMAGES) {
+        if (referenceImageUrl) {
+          deferredReferenceImages.push(referenceImageUrl);
+        }
+
+        if (Array.isArray(referenceImages)) {
+          for (const img of referenceImages) {
+            if (typeof img !== 'string') continue;
+
+            if (img.startsWith('data:')) {
+              const match = img.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                imageList.push({ mimeType: match[1], data: img });
+              }
+              continue;
+            }
+
+            const trimmed = img.trim();
+            if (trimmed) {
+              deferredReferenceImages.push(trimmed);
+            }
+          }
+        }
+      });
+
+      inlineImageCount = imageList.length;
+      deferredReferenceImageCount = deferredReferenceImages.length;
+      const referenceImageCount = inlineImageCount + deferredReferenceImageCount;
+
+      if (referenceImageCount > MAX_REFERENCE_IMAGES) {
         throwRouteResponse(
           NextResponse.json(
             { error: `最多支持上传 ${MAX_REFERENCE_IMAGES} 张参考图` },
@@ -317,7 +371,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (model.requiresReferenceImage && imageList.length === 0) {
+      if (model.requiresReferenceImage && referenceImageCount === 0) {
         throwRouteResponse(
           NextResponse.json({ error: '当前模型需要上传参考图' }, { status: 400 })
         );
@@ -343,7 +397,9 @@ export async function POST(request: NextRequest) {
       };
 
       try {
-        await updateUserBalance(user.id, -model.costPerGeneration, 'strict');
+        await measureSubmitStage(submitMetrics, 'prechargeBalanceMs', () =>
+          updateUserBalance(user.id, -model.costPerGeneration, 'strict')
+        );
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Insufficient balance';
         if (message.includes('Insufficient balance')) {
@@ -364,7 +420,7 @@ export async function POST(request: NextRequest) {
         imageSize: effectiveImageSize,
         size: resolvedTarget.size || effectiveSize,
         quality,
-        imageCount: imageList.length,
+        imageCount: referenceImageCount,
         progress: 0,
         clientRequestId: clientRequestId || undefined,
         batchId,
@@ -375,17 +431,19 @@ export async function POST(request: NextRequest) {
 
       let generation: Generation;
       try {
-        generation = await saveGeneration({
-          userId: user.id,
-          type: IMAGE_TYPE_BY_CHANNEL[channel.type] || 'gemini-image',
-          prompt: prompt || '',
-          params: generationParams,
-          resultUrl: '',
-          cost: model.costPerGeneration,
-          status: 'pending',
-          balancePrecharged: true,
-          balanceRefunded: false,
-        });
+        generation = await measureSubmitStage(submitMetrics, 'saveGenerationMs', () =>
+          saveGeneration({
+            userId: user.id,
+            type: IMAGE_TYPE_BY_CHANNEL[channel.type] || 'gemini-image',
+            prompt: prompt || '',
+            params: generationParams,
+            resultUrl: '',
+            cost: model.costPerGeneration,
+            status: 'pending',
+            balancePrecharged: true,
+            balanceRefunded: false,
+          })
+        );
       } catch (error) {
         await updateUserBalance(user.id, model.costPerGeneration, 'strict').catch((refundError) => {
           console.error('[API] Precharge rollback failed:', refundError);
@@ -402,19 +460,31 @@ export async function POST(request: NextRequest) {
         prechargedCost: model.costPerGeneration,
         generationParams,
         publicBaseUrl: origin,
+        deferredReferenceImages:
+          deferredReferenceImages.length > 0 ? deferredReferenceImages : undefined,
+        referenceImageAccess:
+          deferredReferenceImages.length > 0
+            ? {
+                userId: session.user.id,
+                userRole: session.user.role,
+              }
+            : undefined,
       };
+      payloadBytes = jsonSizeBytes(queuePayload);
 
       if (systemConfig.generationQueue.enabled) {
         try {
-          await createGenerationJob({
-            generationId: generation.id,
-            userId: user.id,
-            type: 'image',
-            channelId: channel.id,
-            modelId,
-            payload: queuePayload as unknown as Record<string, unknown>,
-            maxAttempts: systemConfig.generationQueue.maxAttempts,
-          });
+          await measureSubmitStage(submitMetrics, 'createGenerationJobMs', () =>
+            createGenerationJob({
+              generationId: generation.id,
+              userId: user.id,
+              type: 'image',
+              channelId: channel.id,
+              modelId,
+              payload: queuePayload as unknown as Record<string, unknown>,
+              maxAttempts: systemConfig.generationQueue.maxAttempts,
+            })
+          );
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Failed to enqueue generation task';
           await updateGeneration(generation.id, {
@@ -437,6 +507,16 @@ export async function POST(request: NextRequest) {
         resolvedModel: resolvedTarget.model,
         resolvedSize: resolvedTarget.size,
         queued: systemConfig.generationQueue.enabled,
+      });
+      logImageSubmitMetrics({
+        generationId: generation.id,
+        modelId,
+        queued: systemConfig.generationQueue.enabled,
+        inlineImageCount,
+        deferredReferenceImageCount,
+        payloadBytes,
+        startedAt: submitStartedAt,
+        metrics: submitMetrics,
       });
 
       return generation;

@@ -14,15 +14,22 @@ import {
 } from './db';
 import { generateImage, type ImageGenerateRequest } from './image-generator';
 import { saveMediaWithMetrics } from './media-storage';
-import type { Generation, GenerationJob } from '@/types';
+import { fetchReferenceImage } from './reference-image';
+import type { Generation, GenerationJob, UserRole } from '@/types';
 
 export interface ImageGenerationJobPayload {
   request: ImageGenerateRequest;
   prechargedCost: number;
   generationParams: Generation['params'];
   publicBaseUrl?: string;
+  deferredReferenceImages?: string[];
+  referenceImageAccess?: {
+    userId: string;
+    userRole: UserRole;
+  };
 }
 
+const MAX_REFERENCE_IMAGE_BYTES = 10 * 1024 * 1024;
 const POLL_INTERVAL_MS = 1_000;
 const LOCK_RENEWAL_MAX_INTERVAL_MS = 60_000;
 const LOCK_RENEWAL_MIN_INTERVAL_MS = 15_000;
@@ -40,6 +47,7 @@ type GenerationJobExecutionContext = {
 type GenerationExecutionMetrics = {
   startedAt: number;
   queueWaitMs: number;
+  referenceImageResolveDurationMs: number;
   upstreamDurationMs: number;
   mediaDownloadDurationMs: number;
   mediaUploadDurationMs: number;
@@ -83,6 +91,9 @@ function asImageGenerationJobPayload(payload: Record<string, unknown>): ImageGen
   if (!request || typeof request !== 'object' || typeof request.modelId !== 'string') {
     throw new Error('Invalid generation job payload');
   }
+  const referenceImageAccess = payload.referenceImageAccess as
+    | ImageGenerationJobPayload['referenceImageAccess']
+    | undefined;
 
   return {
     request,
@@ -90,6 +101,15 @@ function asImageGenerationJobPayload(payload: Record<string, unknown>): ImageGen
     generationParams: (payload.generationParams || {}) as Generation['params'],
     publicBaseUrl:
       typeof payload.publicBaseUrl === 'string' ? payload.publicBaseUrl : undefined,
+    deferredReferenceImages: Array.isArray(payload.deferredReferenceImages)
+      ? payload.deferredReferenceImages.filter((image): image is string => typeof image === 'string')
+      : undefined,
+    referenceImageAccess:
+      referenceImageAccess &&
+      typeof referenceImageAccess.userId === 'string' &&
+      typeof referenceImageAccess.userRole === 'string'
+        ? referenceImageAccess
+        : undefined,
   };
 }
 
@@ -133,6 +153,7 @@ function createExecutionMetrics(context?: GenerationJobExecutionContext): Genera
   return {
     startedAt,
     queueWaitMs: context?.queuedAt ? Math.max(0, startedAt - context.queuedAt) : 0,
+    referenceImageResolveDurationMs: 0,
     upstreamDurationMs: 0,
     mediaDownloadDurationMs: 0,
     mediaUploadDurationMs: 0,
@@ -171,6 +192,7 @@ function logGenerationMetrics(
     attempt: context?.attempt,
     maxAttempts: context?.maxAttempts,
     queueWaitMs: metrics.queueWaitMs,
+    referenceImageResolveDurationMs: metrics.referenceImageResolveDurationMs,
     upstreamDurationMs: metrics.upstreamDurationMs,
     mediaDownloadDurationMs: metrics.mediaDownloadDurationMs,
     mediaUploadDurationMs: metrics.mediaUploadDurationMs,
@@ -199,6 +221,51 @@ async function updateGenerationForExecution(
   );
   if (!updated) {
     throw new GenerationJobLockLostError(context.jobId);
+  }
+}
+
+async function resolveDeferredReferenceImages(
+  payload: ImageGenerationJobPayload,
+  metrics: GenerationExecutionMetrics
+): Promise<ImageGenerateRequest> {
+  const deferredReferenceImages = payload.deferredReferenceImages || [];
+  if (deferredReferenceImages.length === 0) {
+    return payload.request;
+  }
+
+  if (!payload.publicBaseUrl || !payload.referenceImageAccess) {
+    throw new Error('Missing reference image access context');
+  }
+
+  const startedAt = Date.now();
+  try {
+    const resolvedImages: Array<{ mimeType: string; data: string }> = [];
+
+    for (const referenceImageUrl of deferredReferenceImages) {
+      const referenceImage = await fetchReferenceImage(referenceImageUrl, {
+        origin: payload.publicBaseUrl,
+        userId: payload.referenceImageAccess.userId,
+        userRole: payload.referenceImageAccess.userRole,
+        maxBytes: MAX_REFERENCE_IMAGE_BYTES,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        },
+      });
+      resolvedImages.push({
+        mimeType: referenceImage.mimeType,
+        data: referenceImage.dataUrl,
+      });
+    }
+
+    return {
+      ...payload.request,
+      images: [
+        ...(payload.request.images || []),
+        ...resolvedImages,
+      ],
+    };
+  } finally {
+    metrics.referenceImageResolveDurationMs += elapsedMs(startedAt);
   }
 }
 
@@ -275,8 +342,10 @@ export async function executeImageGenerationJobPayload(
       }, context)
     );
 
+    const request = await resolveDeferredReferenceImages(payload, metrics);
+
     const upstreamStartedAt = Date.now();
-    const result = await generateImage(payload.request);
+    const result = await generateImage(request);
     metrics.upstreamDurationMs = elapsedMs(upstreamStartedAt);
 
     await measureDatabaseUpdate(metrics, () =>

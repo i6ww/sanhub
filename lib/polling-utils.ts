@@ -7,7 +7,7 @@ export type FriendlyGenerationError = {
 };
 
 export const GENERATION_TIMEOUT_MS = 30 * 60 * 1000;
-export const GENERATION_SUBMIT_TIMEOUT_MS = GENERATION_TIMEOUT_MS;
+export const GENERATION_SUBMIT_TIMEOUT_MS = 120 * 1000;
 export const GENERATION_POLL_TIMEOUT_MS = GENERATION_TIMEOUT_MS;
 
 export function getPollingInterval(elapsedMs: number, taskType: TaskType): number {
