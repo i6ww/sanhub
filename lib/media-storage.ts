@@ -27,6 +27,21 @@ type SaveMediaOptions = {
   filename?: string;
 };
 
+export type MediaStorageMetrics = {
+  inputKind: 'remote-url' | 'data-url' | 'identifier';
+  outputKind: 'remote-url' | 'remote-bucket' | 'local-file' | 'identifier';
+  bucketResolveDurationMs: number;
+  mediaDownloadDurationMs: number;
+  mediaUploadDurationMs: number;
+  totalDurationMs: number;
+  error?: string;
+};
+
+export type SaveMediaWithMetricsResult = {
+  url: string;
+  metrics: MediaStorageMetrics;
+};
+
 export type LocalMediaCleanupResult = {
   mediaDir: string;
   referencedFiles: number;
@@ -71,6 +86,16 @@ function getExtension(mimeType: string): string {
 
 function isRemoteUrl(value: string): boolean {
   return value.startsWith('http://') || value.startsWith('https://');
+}
+
+function elapsedMs(startedAt: number): number {
+  return Date.now() - startedAt;
+}
+
+function getInputKind(value: string): MediaStorageMetrics['inputKind'] {
+  if (isRemoteUrl(value)) return 'remote-url';
+  if (value.startsWith('data:')) return 'data-url';
+  return 'identifier';
 }
 
 export function getLocalMediaFilename(identifier: string): string | null {
@@ -185,36 +210,70 @@ export async function saveMediaAsync(
   dataUrl: string,
   options: SaveMediaOptions = {}
 ): Promise<string> {
+  const result = await saveMediaWithMetrics(id, dataUrl, options);
+  return result.url;
+}
+
+export async function saveMediaWithMetrics(
+  id: string,
+  dataUrl: string,
+  options: SaveMediaOptions = {}
+): Promise<SaveMediaWithMetricsResult> {
+  const startedAt = Date.now();
+  const metrics: MediaStorageMetrics = {
+    inputKind: getInputKind(dataUrl),
+    outputKind: 'identifier',
+    bucketResolveDurationMs: 0,
+    mediaDownloadDurationMs: 0,
+    mediaUploadDurationMs: 0,
+    totalDurationMs: 0,
+  };
+
+  const bucketResolveStartedAt = Date.now();
   const configuredBucket = await resolveDefaultImageBucket();
+  metrics.bucketResolveDurationMs = elapsedMs(bucketResolveStartedAt);
 
   if (isRemoteUrl(dataUrl)) {
     if (!configuredBucket) {
-      return dataUrl;
+      metrics.outputKind = 'remote-url';
+      metrics.totalDurationMs = elapsedMs(startedAt);
+      return { url: dataUrl, metrics };
     }
 
     try {
+      const downloadStartedAt = Date.now();
       const remote = await downloadRemoteMedia(dataUrl);
+      metrics.mediaDownloadDurationMs += elapsedMs(downloadStartedAt);
       const filename = options.filename || filenameFromUrl(id, dataUrl, remote.mimeType);
+      const uploadStartedAt = Date.now();
       const uploadedUrl = await uploadBufferToImageBucket(
         remote.buffer,
         remote.mimeType,
         filename,
         { publicBaseUrl: options.publicBaseUrl }
       );
+      metrics.mediaUploadDurationMs += elapsedMs(uploadStartedAt);
       if (uploadedUrl) {
         console.log(`[MediaStorage] Cached remote media to bucket: ${uploadedUrl}`);
-        return uploadedUrl;
+        metrics.outputKind = 'remote-bucket';
+        metrics.totalDurationMs = elapsedMs(startedAt);
+        return { url: uploadedUrl, metrics };
       }
     } catch (error) {
+      metrics.error = error instanceof Error ? error.message : 'Remote media cache failed';
       console.warn('[MediaStorage] Remote media cache failed, keeping original URL:', error);
     }
 
-    return dataUrl;
+    metrics.outputKind = 'remote-url';
+    metrics.totalDurationMs = elapsedMs(startedAt);
+    return { url: dataUrl, metrics };
   }
 
   // Compact non-data identifiers can be stored directly.
   if (!dataUrl.startsWith('data:')) {
-    return dataUrl;
+    metrics.outputKind = 'identifier';
+    metrics.totalDurationMs = elapsedMs(startedAt);
+    return { url: dataUrl, metrics };
   }
 
   // Prefer the configured remote image bucket for base64 payloads.
@@ -222,20 +281,35 @@ export async function saveMediaAsync(
     try {
       const parsed = parseDataUrl(dataUrl);
       const filename = options.filename || `${id}.${getExtension(parsed?.mimeType || 'image/jpeg')}`;
+      const uploadStartedAt = Date.now();
       const picuiUrl = await uploadToPicUI(dataUrl, filename, { publicBaseUrl: options.publicBaseUrl });
+      metrics.mediaUploadDurationMs += elapsedMs(uploadStartedAt);
       if (picuiUrl) {
         console.log(`[MediaStorage] Uploaded to remote bucket: ${picuiUrl}`);
-        return picuiUrl;
+        metrics.outputKind = 'remote-bucket';
+        metrics.totalDurationMs = elapsedMs(startedAt);
+        return { url: picuiUrl, metrics };
       }
     } catch (error) {
+      metrics.error = error instanceof Error ? error.message : 'Remote upload failed';
       console.warn('[MediaStorage] Remote upload failed, falling back to local file storage:', error);
     }
 
     // Do not persist large base64 payloads when remote upload is unavailable.
-    return await saveMediaToFile(id, dataUrl);
+    const uploadStartedAt = Date.now();
+    const url = await saveMediaToFile(id, dataUrl);
+    metrics.mediaUploadDurationMs += elapsedMs(uploadStartedAt);
+    metrics.outputKind = 'local-file';
+    metrics.totalDurationMs = elapsedMs(startedAt);
+    return { url, metrics };
   }
 
-  return await saveMediaToFile(id, dataUrl);
+  const uploadStartedAt = Date.now();
+  const url = await saveMediaToFile(id, dataUrl);
+  metrics.mediaUploadDurationMs += elapsedMs(uploadStartedAt);
+  metrics.outputKind = 'local-file';
+  metrics.totalDurationMs = elapsedMs(startedAt);
+  return { url, metrics };
 }
 
 export async function cleanupLocalMediaFiles(

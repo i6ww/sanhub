@@ -13,7 +13,7 @@ import {
   updateGenerationIfLockedByJob,
 } from './db';
 import { generateImage, type ImageGenerateRequest } from './image-generator';
-import { saveMediaAsync } from './media-storage';
+import { saveMediaWithMetrics } from './media-storage';
 import type { Generation, GenerationJob } from '@/types';
 
 export interface ImageGenerationJobPayload {
@@ -30,6 +30,21 @@ const LOCK_RENEWAL_MIN_INTERVAL_MS = 15_000;
 type GenerationJobExecutionContext = {
   jobId: string;
   workerId: string;
+  channelId?: string;
+  modelId?: string;
+  queuedAt?: number;
+  attempt?: number;
+  maxAttempts?: number;
+};
+
+type GenerationExecutionMetrics = {
+  startedAt: number;
+  queueWaitMs: number;
+  upstreamDurationMs: number;
+  mediaDownloadDurationMs: number;
+  mediaUploadDurationMs: number;
+  mediaStorageDurationMs: number;
+  databaseUpdateDurationMs: number;
 };
 
 type QueueRuntime = {
@@ -107,6 +122,63 @@ function lockRenewalInterval(lockTimeoutMs: number): number {
     LOCK_RENEWAL_MIN_INTERVAL_MS,
     Math.min(LOCK_RENEWAL_MAX_INTERVAL_MS, candidate)
   );
+}
+
+function elapsedMs(startedAt: number): number {
+  return Date.now() - startedAt;
+}
+
+function createExecutionMetrics(context?: GenerationJobExecutionContext): GenerationExecutionMetrics {
+  const startedAt = Date.now();
+  return {
+    startedAt,
+    queueWaitMs: context?.queuedAt ? Math.max(0, startedAt - context.queuedAt) : 0,
+    upstreamDurationMs: 0,
+    mediaDownloadDurationMs: 0,
+    mediaUploadDurationMs: 0,
+    mediaStorageDurationMs: 0,
+    databaseUpdateDurationMs: 0,
+  };
+}
+
+async function measureDatabaseUpdate<T>(
+  metrics: GenerationExecutionMetrics,
+  operation: () => Promise<T>
+): Promise<T> {
+  const startedAt = Date.now();
+  try {
+    return await operation();
+  } finally {
+    metrics.databaseUpdateDurationMs += elapsedMs(startedAt);
+  }
+}
+
+function logGenerationMetrics(
+  event: 'completed' | 'failed',
+  generationId: string,
+  payload: ImageGenerationJobPayload,
+  metrics: GenerationExecutionMetrics,
+  context?: GenerationJobExecutionContext,
+  extra: Record<string, unknown> = {}
+): void {
+  console.log('[GenerationMetrics]', JSON.stringify({
+    event,
+    generationId,
+    jobId: context?.jobId,
+    workerId: context?.workerId,
+    channelId: context?.channelId,
+    modelId: context?.modelId || payload.request.modelId,
+    attempt: context?.attempt,
+    maxAttempts: context?.maxAttempts,
+    queueWaitMs: metrics.queueWaitMs,
+    upstreamDurationMs: metrics.upstreamDurationMs,
+    mediaDownloadDurationMs: metrics.mediaDownloadDurationMs,
+    mediaUploadDurationMs: metrics.mediaUploadDurationMs,
+    mediaStorageDurationMs: metrics.mediaStorageDurationMs,
+    databaseUpdateDurationMs: metrics.databaseUpdateDurationMs,
+    totalDurationMs: elapsedMs(metrics.startedAt),
+    ...extra,
+  }));
 }
 
 async function updateGenerationForExecution(
@@ -190,51 +262,82 @@ export async function executeImageGenerationJobPayload(
   payload: ImageGenerationJobPayload,
   context?: GenerationJobExecutionContext
 ): Promise<void> {
-  await updateGenerationForExecution(generationId, {
-    status: 'processing',
-    params: {
-      ...payload.generationParams,
-      progress: 10,
-    },
-  }, context);
+  const metrics = createExecutionMetrics(context);
 
-  const result = await generateImage(payload.request);
+  try {
+    await measureDatabaseUpdate(metrics, () =>
+      updateGenerationForExecution(generationId, {
+        status: 'processing',
+        params: {
+          ...payload.generationParams,
+          progress: 10,
+        },
+      }, context)
+    );
 
-  await updateGenerationForExecution(generationId, {
-    status: 'processing',
-    params: {
-      ...payload.generationParams,
-      progress: 80,
-    },
-  }, context);
+    const upstreamStartedAt = Date.now();
+    const result = await generateImage(payload.request);
+    metrics.upstreamDurationMs = elapsedMs(upstreamStartedAt);
 
-  const savedUrl = await saveMediaAsync(generationId, result.url, {
-    publicBaseUrl: payload.publicBaseUrl,
-  });
+    await measureDatabaseUpdate(metrics, () =>
+      updateGenerationForExecution(generationId, {
+        status: 'processing',
+        params: {
+          ...payload.generationParams,
+          progress: 80,
+        },
+      }, context)
+    );
 
-  if (context) {
-    const completed = await completeGenerationJob(context.jobId, context.workerId, generationId, {
-      resultUrl: savedUrl,
-      params: {
-        ...payload.generationParams,
-        progress: 100,
-      },
+    const savedMedia = await saveMediaWithMetrics(generationId, result.url, {
+      publicBaseUrl: payload.publicBaseUrl,
     });
-    if (!completed) {
-      throw new GenerationJobLockLostError(context.jobId);
-    }
-    return;
-  }
+    metrics.mediaDownloadDurationMs = savedMedia.metrics.mediaDownloadDurationMs;
+    metrics.mediaUploadDurationMs = savedMedia.metrics.mediaUploadDurationMs;
+    metrics.mediaStorageDurationMs = savedMedia.metrics.totalDurationMs;
 
-  await updateGeneration(generationId, {
-    status: 'completed',
-    resultUrl: savedUrl,
-    errorMessage: '',
-    params: {
-      ...payload.generationParams,
-      progress: 100,
-    },
-  });
+    if (context) {
+      const completed = await measureDatabaseUpdate(metrics, () =>
+        completeGenerationJob(context.jobId, context.workerId, generationId, {
+          resultUrl: savedMedia.url,
+          params: {
+            ...payload.generationParams,
+            progress: 100,
+          },
+        })
+      );
+      if (!completed) {
+        throw new GenerationJobLockLostError(context.jobId);
+      }
+      logGenerationMetrics('completed', generationId, payload, metrics, context, {
+        mediaInputKind: savedMedia.metrics.inputKind,
+        mediaOutputKind: savedMedia.metrics.outputKind,
+      });
+      return;
+    }
+
+    await measureDatabaseUpdate(metrics, () =>
+      updateGeneration(generationId, {
+        status: 'completed',
+        resultUrl: savedMedia.url,
+        errorMessage: '',
+        params: {
+          ...payload.generationParams,
+          progress: 100,
+        },
+      })
+    );
+
+    logGenerationMetrics('completed', generationId, payload, metrics, context, {
+      mediaInputKind: savedMedia.metrics.inputKind,
+      mediaOutputKind: savedMedia.metrics.outputKind,
+    });
+  } catch (error) {
+    logGenerationMetrics('failed', generationId, payload, metrics, context, {
+      errorMessage: error instanceof Error ? error.message : 'Generation failed',
+    });
+    throw error;
+  }
 }
 
 async function finalizeExpiredJob(job: GenerationJob) {
@@ -285,6 +388,11 @@ async function executeClaimedJob(state: QueueRuntime, job: GenerationJob, lockTi
     await executeImageGenerationJobPayload(job.generationId, payload, {
       jobId: job.id,
       workerId: state.workerId,
+      channelId: job.channelId,
+      modelId: job.modelId,
+      queuedAt: job.createdAt,
+      attempt: job.attempts,
+      maxAttempts: job.maxAttempts,
     });
     console.log(`[GenerationQueue] Completed job ${job.id}`);
   } catch (error) {
