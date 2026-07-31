@@ -288,16 +288,26 @@ async function ensureGenerationMediaReady(
   let response = await fetch(mediaUrl, {
     method: 'HEAD',
     cache: 'no-store',
+    redirect: 'manual',
     signal,
   });
+
+  if (response.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(response.status)) {
+    return;
+  }
 
   if (response.status === 405) {
     response = await fetch(mediaUrl, {
       method: 'GET',
       cache: 'no-store',
+      redirect: 'manual',
       signal,
     });
     await response.body?.cancel();
+  }
+
+  if (response.type === 'opaqueredirect' || [301, 302, 303, 307, 308].includes(response.status)) {
+    return;
   }
 
   if (response.status === 204 || response.status === 404) {
