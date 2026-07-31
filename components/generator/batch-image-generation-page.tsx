@@ -435,7 +435,7 @@ export function BatchImageGenerationPage() {
           onTimeout: async () => {
             updateTask(task.id, {
               status: task.status === 'processing' ? 'processing' : 'pending',
-              error: 'Polling paused. The task may still finish; check history for the final result.',
+              error: '任务仍在处理中，请稍后到历史记录查看最终结果。',
             });
           },
         });
@@ -451,7 +451,16 @@ export function BatchImageGenerationPage() {
       const taskModel = resolveTaskModel(models, selectedModelId, task);
       if (!taskModel) throw new Error('\u8bf7\u5148\u9009\u62e9\u6a21\u578b');
       if (!modelSupportsTask(taskModel, task)) {
-        throw new Error('\u4efb\u52a1\u7f3a\u5c11\u63d0\u793a\u8bcd\u6216\u53c2\u8003\u56fe');
+        if (!task.prompt.trim() && !taskModel.allowEmptyPrompt) {
+          throw new Error('当前模型必须填写提示词，不能只上传参考图');
+        }
+        if (taskModel.requiresReferenceImage && task.images.length === 0) {
+          throw new Error('当前模型需要上传参考图');
+        }
+        if (task.images.length > 0 && !taskModel.features.imageToImage) {
+          throw new Error('当前模型不支持参考图生成');
+        }
+        throw new Error('任务内容不完整，请检查提示词、模型和参考图');
       }
 
       const taskAspectRatio = resolveTaskAspectRatio(taskModel, aspectRatio);
@@ -547,7 +556,7 @@ export function BatchImageGenerationPage() {
           } catch (err) {
             updateTask(task.id, {
               status: 'failed',
-              error: err instanceof Error ? err.message : 'Generation failed',
+              error: err instanceof Error ? err.message : '图片生成失败，请稍后重试',
               progress: 0,
             });
           }

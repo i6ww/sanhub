@@ -198,12 +198,12 @@ export default function SiteConfigPage() {
     try {
       const res = await fetch('/api/admin/media/cleanup', { cache: 'no-store' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to load local media stats');
+      if (!res.ok) throw new Error(data.error || '本地媒体统计加载失败');
       setMediaCleanup(data.data || null);
     } catch (error) {
       toast({
-        title: 'Failed to load local media stats',
-        description: error instanceof Error ? error.message : 'Unknown error',
+        title: '本地媒体统计加载失败',
+        description: error instanceof Error ? error.message : '未知错误',
         variant: 'destructive',
       });
     } finally {
@@ -217,12 +217,12 @@ export default function SiteConfigPage() {
     const orphanFiles = mediaCleanup?.orphanFiles || 0;
     const orphanBytes = mediaCleanup?.orphanBytes || 0;
     if (orphanFiles <= 0) {
-      toast({ title: 'No orphan local media files to clean' });
+      toast({ title: '没有需要清理的本地媒体文件' });
       return;
     }
 
     const confirmed = window.confirm(
-      `Delete ${orphanFiles} orphan local media files and reclaim about ${formatBytes(orphanBytes)}? This cannot be undone.`
+      `确认删除 ${orphanFiles} 个未被历史记录引用的本地媒体文件，并释放约 ${formatBytes(orphanBytes)} 空间吗？此操作不可撤销。`
     );
     if (!confirmed) return;
 
@@ -230,16 +230,16 @@ export default function SiteConfigPage() {
     try {
       const res = await fetch('/api/admin/media/cleanup', { method: 'POST' });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || 'Failed to clean local media');
+      if (!res.ok) throw new Error(data.error || '本地媒体清理失败');
       setMediaCleanup(data.data || null);
       toast({
-        title: 'Local media cleanup complete',
-        description: `Deleted ${data.data?.deletedFiles || 0} files and reclaimed ${formatBytes(data.data?.deletedBytes || 0)}`,
+        title: '本地媒体清理完成',
+        description: `已删除 ${data.data?.deletedFiles || 0} 个文件，释放 ${formatBytes(data.data?.deletedBytes || 0)}`,
       });
     } catch (error) {
       toast({
-        title: 'Failed to clean local media',
-        description: error instanceof Error ? error.message : 'Unknown error',
+        title: '本地媒体清理失败',
+        description: error instanceof Error ? error.message : '未知错误',
         variant: 'destructive',
       });
     } finally {

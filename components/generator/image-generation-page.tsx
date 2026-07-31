@@ -468,7 +468,7 @@ export function ImageGenerationPage({
           onTimeout: async () => {
             keepTaskPendingAfterPollingIssue(
               taskId,
-              'Polling paused. The task may still finish; check history for the final result.'
+              '任务仍在处理中，请稍后到历史记录查看最终结果。'
             );
             shouldResyncAfterPoll = true;
           },
@@ -620,11 +620,11 @@ export function ImageGenerationPage({
     }
 
     if (!prompt.trim() && !currentModel.allowEmptyPrompt) {
-      return 'This model requires a prompt';
+      return '当前模型必须填写提示词，不能只上传参考图';
     }
 
     if (!prompt.trim() && !hasReferenceInput) {
-      return 'Please enter a prompt or upload a reference image';
+      return '请输入提示词或上传参考图';
     }
 
     return null;
@@ -747,7 +747,7 @@ export function ImageGenerationPage({
         onClearExternalReference?.();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
+      setError(err instanceof Error ? err.message : '图片生成失败，请稍后重试');
     } finally {
       submissionLockRef.current = false;
       setSubmitting(false);
@@ -804,7 +804,7 @@ export function ImageGenerationPage({
         onClearExternalReference?.();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Generation failed');
+      setError(err instanceof Error ? err.message : '图片生成失败，请稍后重试');
     } finally {
       submissionLockRef.current = false;
       setSubmitting(false);

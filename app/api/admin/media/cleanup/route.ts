@@ -30,7 +30,7 @@ export async function GET() {
   } catch (error) {
     console.error('[Media Cleanup] Failed to inspect local media:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to inspect local media' },
+      { error: error instanceof Error ? error.message : '本地媒体统计加载失败' },
       { status: 500 }
     );
   }
@@ -47,7 +47,7 @@ export async function POST() {
   } catch (error) {
     console.error('[Media Cleanup] Failed to clean local media:', error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to clean local media' },
+      { error: error instanceof Error ? error.message : '本地媒体清理失败' },
       { status: 500 }
     );
   }

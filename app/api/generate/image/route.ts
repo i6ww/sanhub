@@ -107,7 +107,7 @@ async function runDirectGenerationTask(
   try {
     await executeImageGenerationJobPayload(generationId, payload);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Generation failed';
+    const message = error instanceof Error ? error.message : '图片生成失败，请稍后重试';
     await updateGeneration(generationId, {
       status: 'failed',
       errorMessage: message,
@@ -181,23 +181,23 @@ export async function POST(request: NextRequest) {
     const effectiveSize = resolvedInputSize.size || size;
 
     if (clientRequestId && !CLIENT_REQUEST_ID_PATTERN.test(clientRequestId)) {
-      return NextResponse.json({ error: 'Invalid client request id' }, { status: 400 });
+      return NextResponse.json({ error: '请求标识无效，请刷新页面后重试' }, { status: 400 });
     }
 
     await assertPromptsAllowed([prompt]);
 
     if (!modelId) {
-      return NextResponse.json({ error: 'Missing model id' }, { status: 400 });
+      return NextResponse.json({ error: '请先选择模型' }, { status: 400 });
     }
 
     const modelConfig = await getImageModelWithChannel(modelId);
     if (!modelConfig) {
-      return NextResponse.json({ error: 'Model not found' }, { status: 404 });
+      return NextResponse.json({ error: '模型不存在或已被删除，请重新选择模型' }, { status: 404 });
     }
 
     const { model, channel } = modelConfig;
     if (!model.enabled) {
-      return NextResponse.json({ error: 'Model is disabled' }, { status: 400 });
+      return NextResponse.json({ error: '当前模型已停用，请选择其他模型' }, { status: 400 });
     }
 
     const resolvedTarget = resolveImageTarget(
@@ -311,7 +311,7 @@ export async function POST(request: NextRequest) {
       if (imageList.length > MAX_REFERENCE_IMAGES) {
         throwRouteResponse(
           NextResponse.json(
-            { error: `A maximum of ${MAX_REFERENCE_IMAGES} reference images is supported` },
+            { error: `最多支持上传 ${MAX_REFERENCE_IMAGES} 张参考图` },
             { status: 400 }
           )
         );
@@ -319,14 +319,14 @@ export async function POST(request: NextRequest) {
 
       if (model.requiresReferenceImage && imageList.length === 0) {
         throwRouteResponse(
-          NextResponse.json({ error: 'This model requires a reference image' }, { status: 400 })
+          NextResponse.json({ error: '当前模型需要上传参考图' }, { status: 400 })
         );
       }
 
       if (!model.allowEmptyPrompt && !prompt) {
         throwRouteResponse(
           NextResponse.json(
-            { error: 'This model requires a prompt' },
+            { error: '当前模型必须填写提示词，不能只上传参考图' },
             { status: 400 }
           )
         );
@@ -463,13 +463,13 @@ export async function POST(request: NextRequest) {
 
     if (isPromptBlockedError(error)) {
       return NextResponse.json(
-        { error: error instanceof Error ? error.message : 'Prompt blocked by safety policy' },
+        { error: error instanceof Error ? error.message : '提示词包含不允许的内容，请修改后重试' },
         { status: 400 }
       );
     }
 
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Generation failed' },
+      { error: error instanceof Error ? error.message : '图片生成失败，请稍后重试' },
       { status: 500 }
     );
   }

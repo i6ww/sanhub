@@ -134,15 +134,47 @@ export function getGenerationErrorCopy(error: unknown): FriendlyGenerationError 
 
   if (
     normalized.includes('缺少提示词') ||
+    normalized.includes('需要提示词') ||
     normalized.includes('缺少参考图') ||
     normalized.includes('提示词或参考图') ||
     normalized.includes('上传参考图') ||
     normalized.includes('没有可提交') ||
+    lowerMsg.includes('requires a prompt') ||
+    lowerMsg.includes('prompt is required') ||
+    lowerMsg.includes('missing prompt') ||
     lowerMsg.includes('requires a reference image') ||
     lowerMsg.includes('requires reference image') ||
     lowerMsg.includes('please enter a prompt or upload a reference image') ||
     lowerMsg.includes('missing image input')
   ) {
+    if (
+      lowerMsg.includes('requires a prompt') ||
+      lowerMsg.includes('prompt is required') ||
+      lowerMsg.includes('missing prompt') ||
+      normalized.includes('需要提示词') ||
+      normalized.includes('缺少提示词')
+    ) {
+      return {
+        title: '缺少提示词',
+        reason: '当前模型不支持只上传参考图，必须填写提示词。',
+        suggestion: '请补充提示词后重新生成；如果要只用参考图，请切换到支持空提示词的模型。',
+      };
+    }
+
+    if (
+      lowerMsg.includes('requires a reference image') ||
+      lowerMsg.includes('requires reference image') ||
+      lowerMsg.includes('missing image input') ||
+      normalized.includes('缺少参考图') ||
+      normalized.includes('上传参考图')
+    ) {
+      return {
+        title: '缺少参考图',
+        reason: '当前模型需要参考图，但这次任务还没有上传参考图。',
+        suggestion: '请上传参考图后再开始生成，或切换到不需要参考图的模型。',
+      };
+    }
+
     return {
       title: '缺少必要内容',
       reason: '当前模型需要提示词或参考图，但任务里还没有填写完整。',
@@ -180,15 +212,19 @@ export function getGenerationErrorCopy(error: unknown): FriendlyGenerationError 
   }
 
   if (
+    lowerMsg.includes('polling paused') ||
     normalized.includes('任务查询超时') ||
     lowerMsg.includes('generation process begins') ||
+    lowerMsg.includes('still processing') ||
+    lowerMsg.includes('media not ready') ||
+    lowerMsg.includes('media unavailable') ||
     lowerMsg.includes('missing video payload') ||
     lowerMsg.includes('missing image payload')
   ) {
     return {
       title: '任务还在处理中',
-      reason: '生成服务已经开始处理，但这次返回结果比较慢。',
-      suggestion: '请稍等一会儿，或到历史记录里查看最终结果。',
+      reason: '任务已经提交成功，但生成结果或图片文件还没有完全同步到页面。',
+      suggestion: '请稍等一会儿，页面会继续同步；也可以稍后到历史记录查看最终结果。',
     };
   }
 
@@ -201,12 +237,18 @@ export function getGenerationErrorCopy(error: unknown): FriendlyGenerationError 
     lowerMsg.includes('bad gateway') ||
     lowerMsg.includes('gateway timeout') ||
     lowerMsg.includes('server error') ||
+    lowerMsg.includes('too many requests') ||
+    lowerMsg.includes('rate limit') ||
+    lowerMsg.includes('status: 429') ||
+    lowerMsg.includes('request failed: 429') ||
+    lowerMsg.includes('status: 503') ||
+    lowerMsg.includes('request failed: 503') ||
     lowerMsg.includes('status: 5')
   ) {
     return {
       title: '生成服务繁忙',
-      reason: '当前生成服务压力较大，任务没有顺利完成。',
-      suggestion: '请稍后重试；批量生图建议减少同时提交的任务数量。',
+      reason: '上游生成渠道当前压力较大或触发限流，任务没有顺利完成。',
+      suggestion: '请稍后重试；批量生成建议减少同时提交的任务数量，或切换到其他可用渠道。',
     };
   }
 
@@ -251,6 +293,21 @@ export function getGenerationErrorCopy(error: unknown): FriendlyGenerationError 
     };
   }
 
+  if (
+    lowerMsg.includes('storage space insufficient') ||
+    lowerMsg.includes('local media storage is disabled') ||
+    lowerMsg.includes('remote upload failed') ||
+    lowerMsg.includes('failed to save file') ||
+    lowerMsg.includes('imagebucket') ||
+    lowerMsg.includes('mediastorage')
+  ) {
+    return {
+      title: '图片保存失败',
+      reason: '图片已经生成，但保存到图床或本地存储时遇到问题。',
+      suggestion: '请稍后重试；如果连续出现，请联系管理员检查图床空间和媒体存储配置。',
+    };
+  }
+
   if (normalized.includes('剩余') && normalized.includes('次数不足')) {
     return {
       title: '今日次数不够',
@@ -292,17 +349,17 @@ export function getLegacyFriendlyErrorMessage(errMsg: string): string {
     lowerMsg.includes('missing video payload') ||
     lowerMsg.includes('missing image payload')
   ) {
-    return 'Server timeout. Please try again later.';
+    return '任务仍在处理中，请稍后到历史记录查看最终结果。';
   }
   if (
     lowerMsg.includes('heavy_load') ||
     lowerMsg.includes('heavy load') ||
     lowerMsg.includes('try again later')
   ) {
-    return 'Server is busy. Please try again later.';
+    return '生成服务繁忙，请稍后重试。';
   }
   if (lowerMsg.includes('status: 400') || lowerMsg.includes('request failed: 400')) {
-    return 'Request failed. Please retry.';
+    return '请求内容有问题，请检查提示词、模型、比例和参考图后重试。';
   }
   if (
     lowerMsg.includes('network') ||
@@ -310,7 +367,7 @@ export function getLegacyFriendlyErrorMessage(errMsg: string): string {
     lowerMsg.includes('timeout') ||
     lowerMsg.includes('connection')
   ) {
-    return 'Network error. Please check your connection.';
+    return '网络连接不稳定，请检查网络后重试。';
   }
-  return errMsg;
+  return getFriendlyErrorMessage(errMsg);
 }

@@ -261,7 +261,7 @@ export function ResultGallery({
   const [selected, setSelected] = useState<Generation | null>(null);
   const [selectedFailedTask, setSelectedFailedTask] = useState<Task | null>(null);
   const selectedFailedTaskError = selectedFailedTask
-    ? getGenerationErrorCopy(selectedFailedTask.errorMessage || 'Generation failed')
+    ? getGenerationErrorCopy(selectedFailedTask.errorMessage || '图片生成失败，请稍后重试')
     : null;
   const canReuse = (gen: Generation) => isReusableGeneration(gen, onReuseGeneration);
   const isTaskVideo = (task: Task) => task.type?.includes('video') || task.model?.includes('video');

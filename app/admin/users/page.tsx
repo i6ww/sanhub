@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { User, Ban, Check, Search, Edit2, Key, Coins, Loader2, ShieldAlert } from 'lucide-react';
 import type { SafeUser } from '@/types';
@@ -20,6 +20,8 @@ export default function UsersPage() {
   const [editMode, setEditMode] = useState<'password' | 'balance' | null>(null);
   const [editValue, setEditValue] = useState('');
   const [search, setSearch] = useState('');
+  const hasLoadedUsersRef = useRef(false);
+  const latestUsersRequestRef = useRef(0);
 
   const isAdmin = session?.user?.role === 'admin';
   const isModerator = session?.user?.role === 'moderator';
@@ -34,8 +36,12 @@ export default function UsersPage() {
   };
 
   const loadUsers = useCallback(async (nextPage = 1, reset = false) => {
+    const requestId = latestUsersRequestRef.current + 1;
+    latestUsersRequestRef.current = requestId;
+    const shouldShowInitialLoading = reset && !hasLoadedUsersRef.current;
+
     try {
-      if (reset) {
+      if (shouldShowInitialLoading) {
         setLoading(true);
       } else {
         setFetching(true);
@@ -52,6 +58,10 @@ export default function UsersPage() {
       const res = await fetch(`/api/admin/users?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
+        if (requestId !== latestUsersRequestRef.current) {
+          return;
+        }
+
         const nextUsers = data.data || [];
         setUsers(nextUsers);
         setPage(data.page || nextPage);
@@ -72,12 +82,17 @@ export default function UsersPage() {
 
           return nextUsers[0];
         });
+        hasLoadedUsersRef.current = true;
       }
     } catch (err) {
-      console.error('加载用户失败:', err);
+      if (requestId === latestUsersRequestRef.current) {
+        console.error('加载用户失败:', err);
+      }
     } finally {
-      setLoading(false);
-      setFetching(false);
+      if (requestId === latestUsersRequestRef.current) {
+        setLoading(false);
+        setFetching(false);
+      }
     }
   }, [search]);
 

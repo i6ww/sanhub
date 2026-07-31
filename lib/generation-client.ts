@@ -415,7 +415,7 @@ export async function pollGenerationTask(
 
       if (payload.status === 'failed' || payload.status === 'cancelled') {
         if (await completeIfAlreadyFinished()) return;
-        await onFailed(getFriendlyErrorMessage(payload.errorMessage || 'Generation failed'), payload);
+        await onFailed(getFriendlyErrorMessage(payload.errorMessage || '图片生成失败，请稍后重试'), payload);
         return;
       }
 
